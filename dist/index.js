@@ -1,5 +1,98 @@
 "use strict";
-const greet = (name) => {
-    return `Hello, ${name}!`;
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-console.log(greet('World'));
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const mongoose_1 = __importDefault(require("mongoose"));
+const dotenv_1 = __importDefault(require("dotenv"));
+const auth_1 = __importDefault(require("./routes/auth"));
+const patient_1 = __importDefault(require("./routes/patient"));
+const card_1 = __importDefault(require("./routes/card"));
+const order_1 = __importDefault(require("./routes/order"));
+const orderpatient_1 = __importDefault(require("./routes/orderpatient"));
+const MedicalFinding_1 = __importDefault(require("./routes/MedicalFinding"));
+const appointment_1 = __importDefault(require("./routes/appointment"));
+const healthinfo_1 = __importDefault(require("./routes/healthinfo"));
+const countpatient_1 = __importDefault(require("./routes/countpatient"));
+const service_1 = __importDefault(require("./routes/service"));
+const invoice_1 = __importDefault(require("./routes/invoice"));
+const reportinvoice_1 = __importDefault(require("./routes/reportinvoice"));
+const expense_1 = __importDefault(require("./routes/expense"));
+const credit_1 = __importDefault(require("./routes/credit"));
+const Organization_1 = __importDefault(require("./routes/Organization"));
+const authentication_1 = __importDefault(require("./middleware/authentication"));
+const reportapp_1 = __importDefault(require("./routes/reportapp"));
+const MedicalCertificate_1 = __importDefault(require("./routes/MedicalCertificate"));
+const Prescription_1 = __importDefault(require("./routes/Prescription"));
+const listpatient_1 = __importDefault(require("./routes/listpatient"));
+const Disease_1 = __importDefault(require("./routes/Disease"));
+const invreport_1 = __importDefault(require("./routes/invreport"));
+const Labratory_1 = __importDefault(require("./routes/Labratory"));
+const TestSchema_1 = __importDefault(require("./routes/TestSchema"));
+const price_1 = __importDefault(require("./routes/price"));
+const nurse_1 = __importDefault(require("./routes/nurse"));
+const ultralab_1 = __importDefault(require("./routes/ultralab"));
+const payment_1 = __importDefault(require("./routes/payment"));
+const path_1 = __importDefault(require("path"));
+const orgultranote_1 = __importDefault(require("./routes/orgultranote"));
+const cirtificate_1 = __importDefault(require("./routes/cirtificate"));
+const image_1 = __importDefault(require("./routes/image"));
+dotenv_1.default.config();
+const app = (0, express_1.default)();
+const port = process.env.PORT || 5000;
+mongoose_1.default.connect(process.env.DATABASE_URL || "")
+    .then(() => console.log('MongoDB connected'))
+    .catch((err) => console.log(`MongoDB connection error: ${err}`));
+app.use((0, cors_1.default)());
+app.use(express_1.default.json());
+app.use(express_1.default.json({ limit: "50mb" }));
+app.use(express_1.default.urlencoded({ limit: "50mb", extended: true }));
+app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '..', 'public', 'uploads')));
+app.use(express_1.default.json({ limit: "50mb" }));
+app.use(express_1.default.urlencoded({ limit: "50mb", extended: true }));
+app.get('/', (req, res) => {
+    res.send('Hello from the Node.js backend!');
+});
+app.use('/api', auth_1.default);
+app.use('/api/patient', authentication_1.default, patient_1.default);
+app.use('/api/list', authentication_1.default, listpatient_1.default);
+app.use('/api/patcount', countpatient_1.default);
+app.use('/api/card', authentication_1.default, card_1.default);
+app.use('/api/order', authentication_1.default, order_1.default);
+app.use('/api/orderpatient', authentication_1.default, orderpatient_1.default);
+app.use('/api/Medical', authentication_1.default, MedicalFinding_1.default);
+app.use('/api/appointment', authentication_1.default, appointment_1.default);
+app.use('/api/appointoday', authentication_1.default, reportapp_1.default);
+app.use('/api/image', authentication_1.default, image_1.default);
+app.use('/api/ReferLabTest', authentication_1.default, cirtificate_1.default);
+app.use('/api/org', authentication_1.default, orgultranote_1.default);
+app.use('/api/ReportInv', authentication_1.default, invreport_1.default);
+app.use('/api/Prescription', authentication_1.default, Prescription_1.default);
+app.use('/api/MedicalCertificate', authentication_1.default, MedicalCertificate_1.default);
+app.use('/api/Disease', authentication_1.default, Disease_1.default);
+app.use('/api/labratory', authentication_1.default, Labratory_1.default);
+app.use('/api/ultra', authentication_1.default, ultralab_1.default);
+app.use('/api/payment', authentication_1.default, payment_1.default);
+app.use('/api/price', authentication_1.default, price_1.default);
+app.use('/api/nurse', authentication_1.default, nurse_1.default);
+app.use('/api/TestSchema', authentication_1.default, TestSchema_1.default);
+app.use('/api/healthinfo', authentication_1.default, healthinfo_1.default);
+app.use('/api/services', authentication_1.default, service_1.default);
+app.use('/api/invoice', authentication_1.default, invoice_1.default);
+app.use('/api/reportinvoice', authentication_1.default, reportinvoice_1.default);
+app.use('/api/expense', authentication_1.default, expense_1.default);
+app.use('/api/Credit', authentication_1.default, credit_1.default);
+app.use('/api/organization', authentication_1.default, Organization_1.default);
+// Global Error-Handling Middleware
+// Global Error-Handling Middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    const statusCode = err.statusCode || 500;
+    const message = err.message || 'Internal Server Error';
+    res.status(statusCode).json({ error: message });
+});
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+});
