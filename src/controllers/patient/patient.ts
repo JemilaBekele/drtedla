@@ -70,7 +70,7 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     };
   }
 
-  // Automatically generate the next card number
+  // Automatically generate the next card number (without leading zeros)
   // Find the highest card number
   const lastPatient = await Patient.findOne({})
     .sort({ cardno: -1 })
@@ -83,14 +83,14 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     const numericPart = parseInt(lastCardNo.replace(/\D/g, '')); // Remove non-numeric characters
     if (!isNaN(numericPart)) {
       const nextNumber = numericPart + 1;
-      // Format with leading zeros (e.g., 00001, 00002)
-      finalCardNo = nextNumber.toString().padStart(5, '0');
+      // No leading zeros - just convert to string
+      finalCardNo = nextNumber.toString();
     } else {
-      finalCardNo = '00001';
+      finalCardNo = '1';
     }
   } else {
-    // First patient, start with 00001
-    finalCardNo = '00001';
+    // First patient, start with 1
+    finalCardNo = '1';
   }
 
   // Convert DOB to number (timestamp) if provided
