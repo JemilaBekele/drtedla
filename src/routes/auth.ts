@@ -11,5 +11,5 @@ import imageUploadMiddleware from '../middleware/imageUpload'
 // router.route('/users/update').get(getUser).delete(deleteUser).patch(updateUser);
 // router.route('/users/:id').get(getUser)
 // router.route('/users/:id/change-password').patch(changePassword);
-// router.route('/getDoctors').get(getDoctors);
+router.route('/user/getDoctors').get(getDoctors);
 export default router; // Use ES Module export
