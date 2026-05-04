@@ -4,12 +4,12 @@ import { login, register, getAllUsers, getUser, deleteUser, updateUser,changePas
 import imageUploadMiddleware from '../middleware/imageUpload'
 
 
-router.route('/register').post(imageUploadMiddleware, register);
+// router.route('/register').post(imageUploadMiddleware, register);
 
-router.route('/login').post(login);
-router.route('/users').get(getAllUsers);
-router.route('/users/update').get(getUser).delete(deleteUser).patch(updateUser);
-router.route('/users/:id').get(getUser)
-router.route('/users/:id/change-password').patch(changePassword);
-router.route('/getDoctors').get(getDoctors);
+// router.route('/login').post(login);
+// router.route('/users').get(getAllUsers);
+// router.route('/users/update').get(getUser).delete(deleteUser).patch(updateUser);
+// router.route('/users/:id').get(getUser)
+// router.route('/users/:id/change-password').patch(changePassword);
+// router.route('/getDoctors').get(getDoctors);
 export default router; // Use ES Module export
