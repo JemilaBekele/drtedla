@@ -13,7 +13,6 @@ import User from '../../models/Users';
 // Create a new patient
 const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { 
-    cardno, 
     firstname, 
     status, 
     age, 
@@ -71,9 +70,27 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     };
   }
 
-  const existingPatient = await Patient.findOne({ cardno });
-  if (existingPatient) {
-    throw new BadRequestError('Patient ID already exists. Please use a unique patient ID.');
+  // Automatically generate the next card number
+  // Find the highest card number
+  const lastPatient = await Patient.findOne({})
+    .sort({ cardno: -1 })
+    .exec();
+  
+  let finalCardNo;
+  if (lastPatient && lastPatient.cardno) {
+    // Extract numeric part and increment
+    const lastCardNo = lastPatient.cardno;
+    const numericPart = parseInt(lastCardNo.replace(/\D/g, '')); // Remove non-numeric characters
+    if (!isNaN(numericPart)) {
+      const nextNumber = numericPart + 1;
+      // Format with leading zeros (e.g., 00001, 00002)
+      finalCardNo = nextNumber.toString().padStart(5, '0');
+    } else {
+      finalCardNo = '00001';
+    }
+  } else {
+    // First patient, start with 00001
+    finalCardNo = '00001';
   }
 
   // Convert DOB to number (timestamp) if provided
@@ -92,11 +109,11 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
 
   // Prepare patient data
   const patientData = {
-    cardno,
+    cardno: finalCardNo,
     firstname,
     age: age ? parseInt(age) : age, // Convert age to number if provided
     sex,
-    status,
+    status: status || 'active',
     phoneNumber,
     Town,
     KK,
@@ -122,7 +139,11 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
   const patientResponse = patient.toObject();
   delete patientResponse.createdBy;
   
-  res.status(StatusCodes.CREATED).json({ patient: patientResponse });
+  res.status(StatusCodes.CREATED).json({ 
+    success: true, 
+    message: 'Patient created successfully',
+    patient: patientResponse 
+  });
 });
 
 // Get a single bicycle by ID
