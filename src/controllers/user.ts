@@ -85,8 +85,10 @@ const createUser = asyncWrapper(async (req: Request, res: Response): Promise<voi
 });
 
 // Get all users (optional utility function)
-const getAllUsers = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const users = await User.find({}).select('-password'); // Exclude password field
+const getAllUsers = asyncWrapper(async (req, res) => {
+  // Filter for roles that are NOT equal to 'User'
+  const users = await User.find({ role: { $ne: 'User' } }).select('-password');
+
   res.status(StatusCodes.OK).json({
     success: true,
     count: users.length,

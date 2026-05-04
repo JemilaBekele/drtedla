@@ -7,7 +7,6 @@ const router = express.Router();
 router.route('/register').post(createUser);           // Create a new user
 router.route('/').get(getAllUsers);           // Get all users
 router.route('/:id').get(getUserById);        // Get a single user by ID
-router.route('/:id').patch(updateUser);       // Update a user by ID
-router.route('/:id').delete(deleteUser);      // Delete a user by ID
+router.route('/upre/:id').patch(updateUser);       // Update a user by ID
 
 export default router;

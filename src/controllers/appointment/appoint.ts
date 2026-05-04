@@ -13,11 +13,11 @@ import mongoose from 'mongoose';
 // Create a new appointment
 // Create a new appointment
 const createAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { id } = req.params; // Patient ID from URL params
+  const { patientId } = req.params; // Patient ID from URL params
   const { appointmentDate, appointmentTime, reasonForVisit, doctorId } = req.body;
 
   // Validate required fields
-  if (!id) {
+  if (!patientId) {
     throw new BadRequestError('Patient ID is required');
   }
 
@@ -26,7 +26,7 @@ const createAppointment = asyncWrapper(async (req: Request, res: Response): Prom
   }
 
   // Find the patient by ID
-  const patient = await Patient.findById(id).exec();
+  const patient = await Patient.findById(patientId).exec();
   if (!patient) {
     throw new NotFoundError('Patient not found');
   }
@@ -122,15 +122,15 @@ const createAppointment = asyncWrapper(async (req: Request, res: Response): Prom
 // Get all appointments for a patient
 // Get all appointments for a patient
 const getAppointments = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { id } = req.params; // Patient ID from URL params
+  const { patientId } = req.params; // Patient ID from URL params
 
   // Validate required fields
-  if (!id) {
+  if (!patientId) {
     throw new BadRequestError('Patient ID is required');
   }
 
   // Find all appointments for this patient using the new schema structure
-  const appointments = await Appointment.find({ 'patientId.id': id })
+  const appointments = await Appointment.find({ 'patientId.id': patientId })
     .sort({ createdAt: -1 }) // Sort by newest first
     .exec();
   
@@ -154,15 +154,15 @@ const getAppointments = asyncWrapper(async (req: Request, res: Response): Promis
 
 // Get a specific appointment by ID
 const getAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { recordId } = req.params; // Appointment ID from URL params
+  const { appointmentId } = req.params; // Appointment ID from URL params
 
   // Validate required fields
-  if (!recordId) {
+  if (!appointmentId) {
     throw new BadRequestError('Appointment ID is required');
   }
 
   // Find the appointment by ID directly from Appointment model
-  const appointment = await Appointment.findById(recordId).exec();
+  const appointment = await Appointment.findById(appointmentId).exec();
   if (!appointment) {
     throw new NotFoundError('Appointment not found');
   }

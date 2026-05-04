@@ -134,7 +134,9 @@ const getpatient = asyncWrapper(async (req: Request, res: Response): Promise<voi
   }
 
   // Pass the ObjectId directly to findById
-  const patient = await Patient.findById({_id: PatientId});
+  const patient = await Patient.findById({_id: PatientId}).select(
+      '-createdBy -Order -MedicalFinding -Healthinfo -Appointment -Image -Invoice -Card -Credit -Orgnazation -Prescription -TreatmentPlan -Consent -Orthodontics -ReferalCertificate -FNA -MedicalCertificate -Note -NoteConPat -DentalChart -SampleTwo -Perfo -DentalLabForm'
+    );
   if (!patient) {
     throw new NotFoundError(`No Patient found with ID: ${PatientId}`);
   }
@@ -152,8 +154,9 @@ const getAllpatient = asyncWrapper(async (req: Request, res: Response): Promise<
   const patients = await Patient.find({})
     .skip(skip)
     .limit(limit)
-        .select('-createdBy') // Exclude createdBy field from the query
-
+.select(
+      '-createdBy -Order -MedicalFinding -Healthinfo -Appointment -Image -Invoice -Card -Credit -Orgnazation -Prescription -TreatmentPlan -Consent -Orthodontics -ReferalCertificate -FNA -MedicalCertificate -Note -NoteConPat -DentalChart -SampleTwo -Perfo -DentalLabForm'
+    )
     .sort({ createdAt: -1 }); // Sort by newest first
 
   const totalPatients = await Patient.countDocuments({});
@@ -233,8 +236,9 @@ const searchPatients = asyncWrapper(async (req: Request, res: Response): Promise
   const patients = await Patient.find(query)
     .skip(skip)
     .limit(limit)
-        .select('-createdBy') // Exclude createdBy field from the query
-
+.select(
+      '-createdBy -Order -MedicalFinding -Healthinfo -Appointment -Image -Invoice -Card -Credit -Orgnazation -Prescription -TreatmentPlan -Consent -Orthodontics -ReferalCertificate -FNA -MedicalCertificate -Note -NoteConPat -DentalChart -SampleTwo -Perfo -DentalLabForm'
+    )
     .sort({ createdAt: -1 });
 
   const totalPatients = await Patient.countDocuments(query);

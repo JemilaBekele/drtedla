@@ -4,10 +4,10 @@ import { createAppointment, getAppointments, getAppointment, updateAppointment, 
 const router = express.Router();
 
 // Define routes for Bicycle
-router.route('/:id').post(createAppointment);  
+router.route('/:patientId').post(createAppointment);  
 router.route('/schedule').get(getAppointmentsschejule);  // Get all scheduled appointments
-router.route('/:id').get(getAppointments);  
-router.route('/detail/:id').get(getAppointment);                   // Get a single bicycle by ID                 // Get all bicycles
-router.route('/:id').patch(updateAppointment);           // Delete a bicycle by ID
+router.route('/:patientId').get(getAppointments);  
+router.route('/detail/:appointmentId').get(getAppointment);                   // Get a single bicycle by ID                 // Get all bicycles
+router.route('/:appointmentId').patch(updateAppointment);           // Delete a bicycle by ID
 
 export default router;
