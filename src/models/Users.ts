@@ -1,6 +1,5 @@
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs'; // Use import instead of require
-import jwt from 'jsonwebtoken'; // Use import instead of require
+import mongoose from "mongoose";
+
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -15,7 +14,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'doctor', "nurse",'reception',"Laboratory" , "Ultrasound"],
+    enum: ['admin', 'doctor', 'reception','User', 'Locked','nurse','inventory','labratory'], // Example roles
     required: [true, "Please provide a role"],
   },
   phone: {
@@ -27,34 +26,43 @@ const userSchema = new mongoose.Schema({
     required: false, // Optional: set to true if you want to require an image
     default: null, // Default value if no image is provided
   },
+  deadlinetime: {
+    type: Date,
+    required: false, // Set to true if you want it mandatory
+    default: null,   // Or new Date() if you want to auto-fill
+  },
+  lock:{
+     type: Boolean,
+    default: false,
+  },
+   experience: {
+    type: Number, // years of experience
+    required: false,
+    default: null,
+  },
+  position: {
+    type: String, // job title, e.g. "Senior Nurse"
+    required: false,
+    default: null,
+  },
 });
 
-// Hash the password before saving
-userSchema.pre('save', async function (next) {
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+
+// Middleware to ensure only one 'Locked' role user exists
+userSchema.pre("save", async function (next) {
+  if (this.role === 'Locked') {
+    const existingLockedUser = await mongoose.models.User.findOne({ role: 'Locked' });
+    if (existingLockedUser && existingLockedUser._id.toString() !== this._id.toString()) {
+      const error = new Error("Only one user with role 'Locked' is allowed.");
+      error.name = "ValidationError";
+      return next(error);
+    }
+  }
   next();
 });
 
-// Method to generate JWT
-userSchema.methods.createJWT = function () {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET is not defined in environment variables");
-  }
-  return jwt.sign(
-    { userId: this._id, username: this.username, role: this.role },
-    secret,
-    { expiresIn: process.env.JWT_LIFETIME || "1d" }
-  );
-};
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
 
-userSchema.methods.comparePassword = async function (candidatePassword: string) {
-  const isMatch = await bcrypt.compare(candidatePassword, this.password);
-  return isMatch;
-};
-
-const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 export default User;

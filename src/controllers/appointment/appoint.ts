@@ -8,26 +8,21 @@ import BadRequestError from '../../errors/bad-request';
 import NotFoundError from '../../errors/not-found';
 import mongoose from 'mongoose';
 
-interface AuthenticatedRequest extends Request {
-  user?: {
-    userId: string;
-    username: string;
-    role:string;
-  };
-}
+
 
 // Create a new appointment
-const createAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// Create a new appointment
+const createAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params; // Patient ID from URL params
-  const { appointmentDate, appointmentTime, reasonForVisit, status, doctorId } = req.body;
+  const { appointmentDate, appointmentTime, reasonForVisit, doctorId } = req.body;
 
   // Validate required fields
   if (!id) {
     throw new BadRequestError('Patient ID is required');
   }
 
-  if (!appointmentDate || !appointmentTime || !status) {
-    throw new BadRequestError('Missing required fields');
+  if (!appointmentDate || !appointmentTime) {
+    throw new BadRequestError('Missing required fields: appointmentDate and appointmentTime are required');
   }
 
   // Find the patient by ID
@@ -36,38 +31,73 @@ const createAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Re
     throw new NotFoundError('Patient not found');
   }
 
-  // Determine doctor ID based on user role
-  let assignedDoctorId: mongoose.Types.ObjectId | undefined;
-  
-  if (req.user?.role === 'doctor') {
-    // If user is a doctor, use their own ID
-    assignedDoctorId = new mongoose.Types.ObjectId(req.user.userId);
-  } else if (doctorId) {
-    // For non-doctors, doctorId must be provided in request body
-    assignedDoctorId = new mongoose.Types.ObjectId(doctorId);
-    
-    // Verify the doctor exists
-    const doctorExists = await User.findById(doctorId).exec();
-    if (!doctorExists || doctorExists.role !== 'doctor') {
-      throw new BadRequestError('Invalid doctor ID provided');
-    }
-  } else {
-    throw new BadRequestError('Doctor ID is required for non-doctor users');
+  // Validate doctorId is provided
+  if (!doctorId) {
+    throw new BadRequestError('Doctor ID is required');
   }
 
-  const createdBy = {
-    id: req.user?.userId || '',
-    username: req.user?.username || '',
+  // Determine doctor information
+  let doctorInfo;
+
+  // For non-doctors, doctorId must be provided in request body
+  const doctorExists = await User.findById(doctorId).exec();
+  if (!doctorExists || doctorExists.role !== 'doctor') {
+    throw new BadRequestError('Invalid doctor ID provided');
+  }
+  doctorInfo = {
+    id: new mongoose.Types.ObjectId(doctorId),
+    username: doctorExists.username,
   };
 
-  // Create a new Appointment
+  // Determine createdBy - randomly select a user with role 'User' from User model
+  let createdBy;
+
+  // Find users with role 'User' and not locked
+  const availableUsers = await User.find({ 
+    role: 'User',
+    lock: false // Only non-locked users
+  });
+  
+  if (availableUsers.length === 0) {
+    // Fallback: get any unlocked user if no 'User' role exists
+    const anyUser = await User.findOne({ lock: false });
+    if (anyUser) {
+      createdBy = {
+        id: anyUser._id,
+        username: anyUser.username,
+      };
+    } else {
+      // Ultimate fallback - system user
+      createdBy = {
+        id: 'system',
+        username: 'system',
+      };
+    }
+  } else {
+    // Select random user from available 'User' role users
+    const randomIndex = Math.floor(Math.random() * availableUsers.length);
+    const randomUser = availableUsers[randomIndex];
+    createdBy = {
+      id: randomUser._id,
+      username: randomUser.username,
+    };
+  }
+
+  // Prepare patient info for the appointment
+  const patientInfo = {
+    id: patient._id,
+    username: patient.firstname, // Using firstname as username for patient
+    cardno: patient.cardno,
+  };
+
+  // Create a new Appointment with default status 'Scheduled'
   const newAppointment = new Appointment({
     appointmentDate,
     appointmentTime,
-    reasonForVisit,
-    status,
-    patientId: patient._id, // Simplified from { id: patient._id }
-    doctorId: assignedDoctorId,
+    reasonForVisit: reasonForVisit || '', // Optional field
+    status: 'Scheduled', // Default status
+    doctorId: doctorInfo,
+    patientId: patientInfo,
     createdBy,
   });
 
@@ -78,13 +108,18 @@ const createAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Re
   patient.Appointment.push(savedAppointment._id);
   await patient.save();
 
+  // Remove createdBy from the response
+  const appointmentResponse = savedAppointment.toObject();
+  delete appointmentResponse.createdBy;
+
   res.status(StatusCodes.CREATED).json({
     message: 'Appointment created successfully',
     success: true,
-    data: savedAppointment,
+    data: appointmentResponse,
   });
 });
 
+// Get all appointments for a patient
 // Get all appointments for a patient
 const getAppointments = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params; // Patient ID from URL params
@@ -94,53 +129,39 @@ const getAppointments = asyncWrapper(async (req: Request, res: Response): Promis
     throw new BadRequestError('Patient ID is required');
   }
 
-  // Find the patient by ID and populate the Appointment field
-  const patient = await Patient.findById(id).populate('Appointment').exec();
-  if (!patient) {
-    throw new NotFoundError('Patient not found');
-  }
-
-  if (!patient.Appointment || patient.Appointment.length === 0) {
+  // Find all appointments for this patient using the new schema structure
+  const appointments = await Appointment.find({ 'patientId.id': id })
+    .sort({ createdAt: -1 }) // Sort by newest first
+    .exec();
+  
+  if (!appointments || appointments.length === 0) {
     res.status(StatusCodes.OK).json({
-      message: 'No Appointment available for this patient',
+      message: 'No appointments available for this patient',
+      success: true,
       data: [],
+      count: 0,
     });
     return;
   }
 
-  // Sort the appointments by `createdAt` in descending order
-  const sortedAppointments = patient.Appointment.sort((a: any, b: any) => {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
-
   res.status(StatusCodes.OK).json({
     message: 'Appointments retrieved successfully',
     success: true,
-    data: sortedAppointments,
+    data: appointments,
+    count: appointments.length,
   });
 });
 
-
-
-
-
-
-// Get a specific appointment by patientId and recordId
+// Get a specific appointment by ID
 const getAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { patientId, recordId } = req.params;
+  const { recordId } = req.params; // Appointment ID from URL params
 
   // Validate required fields
-  if (!patientId || !recordId) {
-    throw new BadRequestError('Patient ID and Appointment ID are required');
+  if (!recordId) {
+    throw new BadRequestError('Appointment ID is required');
   }
 
-  // Find the patient by ID
-  const patient = await Patient.findById(patientId).exec();
-  if (!patient) {
-    throw new NotFoundError('Patient not found');
-  }
-
-  // Find the appointment by ID
+  // Find the appointment by ID directly from Appointment model
   const appointment = await Appointment.findById(recordId).exec();
   if (!appointment) {
     throw new NotFoundError('Appointment not found');
@@ -154,16 +175,63 @@ const getAppointment = asyncWrapper(async (req: Request, res: Response): Promise
 });
 
 // Update a specific appointment
-const updateAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { appointmentId, ...data } = req.body;
+const updateAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+  const { appointmentId } = req.params; // Get appointmentId from URL params
+  const updateData = req.body;
 
   // Validate required fields
   if (!appointmentId) {
     throw new BadRequestError('Appointment ID is required');
   }
 
+  // Allowed updates including doctorId
+  const allowedUpdates = ['appointmentDate', 'appointmentTime', 'reasonForVisit', 'status', 'doctorId'];
+  const filteredUpdateData: any = {};
+  
+  for (const key of Object.keys(updateData)) {
+    if (allowedUpdates.includes(key)) {
+      // Handle doctorId update specially
+      if (key === 'doctorId') {
+        // Check if doctorId is provided as a string (ID only) or as an object
+        if (typeof updateData.doctorId === 'string') {
+          // Fetch doctor details from User model
+          const doctorExists = await User.findById(updateData.doctorId).exec();
+          if (!doctorExists || doctorExists.role !== 'doctor') {
+            throw new BadRequestError('Invalid doctor ID provided');
+          }
+          filteredUpdateData.doctorId = {
+            id: doctorExists._id,
+            username: doctorExists.username,
+          };
+        } else if (typeof updateData.doctorId === 'object' && updateData.doctorId.id) {
+          // If doctorId is provided as an object with id
+          const doctorExists = await User.findById(updateData.doctorId.id).exec();
+          if (!doctorExists || doctorExists.role !== 'doctor') {
+            throw new BadRequestError('Invalid doctor ID provided');
+          }
+          filteredUpdateData.doctorId = {
+            id: doctorExists._id,
+            username: doctorExists.username,
+          };
+        } else {
+          throw new BadRequestError('Invalid doctor ID format');
+        }
+      } else {
+        filteredUpdateData[key] = updateData[key];
+      }
+    }
+  }
+
   // Find and update the appointment by ID
-  const updatedAppointment = await Appointment.findByIdAndUpdate(appointmentId, data, { new: true }).exec();
+  const updatedAppointment = await Appointment.findByIdAndUpdate(
+    appointmentId, 
+    filteredUpdateData, 
+    { 
+      new: true, // Return the updated document
+      runValidators: true // Run schema validations
+    }
+  ).exec();
+  
   if (!updatedAppointment) {
     throw new NotFoundError('Appointment not found');
   }
@@ -175,42 +243,33 @@ const updateAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Re
   });
 });
 
-// Delete a specific appointment
-const deleteAppointment = asyncWrapper(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { appointmentId } = req.body;
 
-  // Validate required fields
-  if (!appointmentId) {
-    throw new BadRequestError('Appointment ID is required');
-  }
 
-  // Find and delete the appointment by ID
-  const deletedAppointment = await Appointment.findByIdAndDelete(appointmentId).exec();
-  if (!deletedAppointment) {
-    throw new NotFoundError('Appointment not found');
-  }
-
-  // Remove the appointment reference from the associated patient's record
-  const patient = await Patient.findOneAndUpdate(
-    { Appointment: appointmentId }, // Find the patient with this appointment ID
-    { $pull: { Appointment: appointmentId } }, // Remove the appointment ID from the array
-    { new: true } // Return the updated patient document
-  );
-
-  if (!patient) {
-    console.warn(`No patient found with Appointment ID: ${appointmentId}`);
+// Get all scheduled appointments
+const getAppointmentsschejule = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+  // Find all appointments and populate patient and doctor info
+  const appointments = await Appointment.find({ status: 'Scheduled' })
+    .sort({ appointmentDate: 1, appointmentTime: 1 }) // Sort by date and time ascending
+    .select('-createdBy') // Exclude createdBy field from the query
+    .exec();
+  
+  if (!appointments || appointments.length === 0) {
+    res.status(StatusCodes.OK).json({
+      message: 'No scheduled appointments available',
+      success: true,
+      data: [],
+      count: 0,
+    });
+    return;
   }
 
   res.status(StatusCodes.OK).json({
-    message: 'Appointment deleted successfully and reference removed from patient',
+    message: 'Appointments retrieved successfully',
     success: true,
+    data: appointments,
+    count: appointments.length,
   });
 });
 
 
-
-
-
-
-
-export { createAppointment, getAppointments, getAppointment, updateAppointment, deleteAppointment };
+export { createAppointment, getAppointments, getAppointment, updateAppointment,getAppointmentsschejule };

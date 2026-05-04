@@ -8,22 +8,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var __rest = (this && this.__rest) || function (s, e) {
-    var t = {};
-    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
-        t[p] = s[p];
-    if (s != null && typeof Object.getOwnPropertySymbols === "function")
-        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
-            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
-                t[p[i]] = s[p[i]];
-        }
-    return t;
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteAppointment = exports.updateAppointment = exports.getAppointment = exports.getAppointments = exports.createAppointment = void 0;
+exports.updateAppointment = exports.getAppointment = exports.getAppointments = exports.createAppointment = void 0;
 const http_status_codes_1 = require("http-status-codes");
 const async_1 = __importDefault(require("../../middleware/async"));
 const appointment_1 = __importDefault(require("../../models/appointment"));
@@ -34,7 +23,7 @@ const not_found_1 = __importDefault(require("../../errors/not-found"));
 const mongoose_1 = __importDefault(require("mongoose"));
 // Create a new appointment
 const createAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c;
+    var _a;
     const { id } = req.params; // Patient ID from URL params
     const { appointmentDate, appointmentTime, reasonForVisit, status, doctorId } = req.body;
     // Validate required fields
@@ -49,36 +38,87 @@ const createAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, v
     if (!patient) {
         throw new not_found_1.default('Patient not found');
     }
-    // Determine doctor ID based on user role
-    let assignedDoctorId;
+    // Determine doctor information
+    let doctorInfo;
     if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) === 'doctor') {
-        // If user is a doctor, use their own ID
-        assignedDoctorId = new mongoose_1.default.Types.ObjectId(req.user.userId);
+        // If user is a doctor, use their own info
+        doctorInfo = {
+            id: new mongoose_1.default.Types.ObjectId(req.user.userId),
+            username: req.user.username,
+        };
     }
     else if (doctorId) {
         // For non-doctors, doctorId must be provided in request body
-        assignedDoctorId = new mongoose_1.default.Types.ObjectId(doctorId);
-        // Verify the doctor exists
         const doctorExists = yield Users_1.default.findById(doctorId).exec();
         if (!doctorExists || doctorExists.role !== 'doctor') {
             throw new bad_request_1.default('Invalid doctor ID provided');
         }
+        doctorInfo = {
+            id: new mongoose_1.default.Types.ObjectId(doctorId),
+            username: doctorExists.username,
+        };
     }
     else {
         throw new bad_request_1.default('Doctor ID is required for non-doctor users');
     }
-    const createdBy = {
-        id: ((_b = req.user) === null || _b === void 0 ? void 0 : _b.userId) || '',
-        username: ((_c = req.user) === null || _c === void 0 ? void 0 : _c.username) || '',
+    // Determine createdBy - same logic as createPatient
+    let createdBy;
+    // Check if user is logged in
+    if (req.user && req.user.userId && req.user.username) {
+        // User is authenticated, use their info as creator
+        createdBy = {
+            id: req.user.userId,
+            username: req.user.username,
+        };
+    }
+    else {
+        // No logged-in user - randomly select a user with role 'User' from User model
+        // Find users with role 'User' and not locked
+        const availableUsers = yield Users_1.default.find({
+            role: 'User',
+            lock: false // Only non-locked users
+        });
+        if (availableUsers.length === 0) {
+            // Fallback: get any unlocked user if no 'User' role exists
+            const anyUser = yield Users_1.default.findOne({ lock: false });
+            if (anyUser) {
+                createdBy = {
+                    id: anyUser._id,
+                    username: anyUser.username,
+                };
+            }
+            else {
+                // Ultimate fallback - system user
+                createdBy = {
+                    id: 'system',
+                    username: 'system',
+                };
+            }
+        }
+        else {
+            // Select random user from available 'User' role users
+            const randomIndex = Math.floor(Math.random() * availableUsers.length);
+            const randomUser = availableUsers[randomIndex];
+            createdBy = {
+                id: randomUser._id,
+                username: randomUser.username,
+            };
+        }
+    }
+    // Prepare patient info for the appointment
+    const patientInfo = {
+        id: patient._id,
+        username: patient.firstname, // Using firstname as username for patient
+        cardno: patient.cardno,
     };
-    // Create a new Appointment
+    // Create a new Appointment based on the new schema
     const newAppointment = new appointment_1.default({
         appointmentDate,
         appointmentTime,
         reasonForVisit,
         status,
-        patientId: patient._id, // Simplified from { id: patient._id }
-        doctorId: assignedDoctorId,
+        doctorId: doctorInfo,
+        patientId: patientInfo,
         createdBy,
     });
     const savedAppointment = yield newAppointment.save();
@@ -94,48 +134,42 @@ const createAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, v
 }));
 exports.createAppointment = createAppointment;
 // Get all appointments for a patient
+// Get all appointments for a patient
 const getAppointments = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id } = req.params; // Patient ID from URL params
     // Validate required fields
     if (!id) {
         throw new bad_request_1.default('Patient ID is required');
     }
-    // Find the patient by ID and populate the Appointment field
-    const patient = yield Patient_1.default.findById(id).populate('Appointment').exec();
-    if (!patient) {
-        throw new not_found_1.default('Patient not found');
-    }
-    if (!patient.Appointment || patient.Appointment.length === 0) {
+    // Find all appointments for this patient using the new schema structure
+    const appointments = yield appointment_1.default.find({ 'patientId.id': id })
+        .sort({ createdAt: -1 }) // Sort by newest first
+        .exec();
+    if (!appointments || appointments.length === 0) {
         res.status(http_status_codes_1.StatusCodes.OK).json({
-            message: 'No Appointment available for this patient',
+            message: 'No appointments available for this patient',
+            success: true,
             data: [],
+            count: 0,
         });
         return;
     }
-    // Sort the appointments by `createdAt` in descending order
-    const sortedAppointments = patient.Appointment.sort((a, b) => {
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
     res.status(http_status_codes_1.StatusCodes.OK).json({
         message: 'Appointments retrieved successfully',
         success: true,
-        data: sortedAppointments,
+        data: appointments,
+        count: appointments.length,
     });
 }));
 exports.getAppointments = getAppointments;
-// Get a specific appointment by patientId and recordId
+// Get a specific appointment by ID
 const getAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const { patientId, recordId } = req.params;
+    const { recordId } = req.params; // Appointment ID from URL params
     // Validate required fields
-    if (!patientId || !recordId) {
-        throw new bad_request_1.default('Patient ID and Appointment ID are required');
+    if (!recordId) {
+        throw new bad_request_1.default('Appointment ID is required');
     }
-    // Find the patient by ID
-    const patient = yield Patient_1.default.findById(patientId).exec();
-    if (!patient) {
-        throw new not_found_1.default('Patient not found');
-    }
-    // Find the appointment by ID
+    // Find the appointment by ID directly from Appointment model
     const appointment = yield appointment_1.default.findById(recordId).exec();
     if (!appointment) {
         throw new not_found_1.default('Appointment not found');
@@ -149,13 +183,56 @@ const getAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, void
 exports.getAppointment = getAppointment;
 // Update a specific appointment
 const updateAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const _a = req.body, { appointmentId } = _a, data = __rest(_a, ["appointmentId"]);
+    const { appointmentId } = req.params; // Get appointmentId from URL params
+    const updateData = req.body;
     // Validate required fields
     if (!appointmentId) {
         throw new bad_request_1.default('Appointment ID is required');
     }
+    // Allowed updates including doctorId
+    const allowedUpdates = ['appointmentDate', 'appointmentTime', 'reasonForVisit', 'status', 'doctorId'];
+    const filteredUpdateData = {};
+    for (const key of Object.keys(updateData)) {
+        if (allowedUpdates.includes(key)) {
+            // Handle doctorId update specially
+            if (key === 'doctorId') {
+                // Check if doctorId is provided as a string (ID only) or as an object
+                if (typeof updateData.doctorId === 'string') {
+                    // Fetch doctor details from User model
+                    const doctorExists = yield Users_1.default.findById(updateData.doctorId).exec();
+                    if (!doctorExists || doctorExists.role !== 'doctor') {
+                        throw new bad_request_1.default('Invalid doctor ID provided');
+                    }
+                    filteredUpdateData.doctorId = {
+                        id: doctorExists._id,
+                        username: doctorExists.username,
+                    };
+                }
+                else if (typeof updateData.doctorId === 'object' && updateData.doctorId.id) {
+                    // If doctorId is provided as an object with id
+                    const doctorExists = yield Users_1.default.findById(updateData.doctorId.id).exec();
+                    if (!doctorExists || doctorExists.role !== 'doctor') {
+                        throw new bad_request_1.default('Invalid doctor ID provided');
+                    }
+                    filteredUpdateData.doctorId = {
+                        id: doctorExists._id,
+                        username: doctorExists.username,
+                    };
+                }
+                else {
+                    throw new bad_request_1.default('Invalid doctor ID format');
+                }
+            }
+            else {
+                filteredUpdateData[key] = updateData[key];
+            }
+        }
+    }
     // Find and update the appointment by ID
-    const updatedAppointment = yield appointment_1.default.findByIdAndUpdate(appointmentId, data, { new: true }).exec();
+    const updatedAppointment = yield appointment_1.default.findByIdAndUpdate(appointmentId, filteredUpdateData, {
+        new: true, // Return the updated document
+        runValidators: true // Run schema validations
+    }).exec();
     if (!updatedAppointment) {
         throw new not_found_1.default('Appointment not found');
     }
@@ -166,29 +243,3 @@ const updateAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, v
     });
 }));
 exports.updateAppointment = updateAppointment;
-// Delete a specific appointment
-const deleteAppointment = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const { appointmentId } = req.body;
-    // Validate required fields
-    if (!appointmentId) {
-        throw new bad_request_1.default('Appointment ID is required');
-    }
-    // Find and delete the appointment by ID
-    const deletedAppointment = yield appointment_1.default.findByIdAndDelete(appointmentId).exec();
-    if (!deletedAppointment) {
-        throw new not_found_1.default('Appointment not found');
-    }
-    // Remove the appointment reference from the associated patient's record
-    const patient = yield Patient_1.default.findOneAndUpdate({ Appointment: appointmentId }, // Find the patient with this appointment ID
-    { $pull: { Appointment: appointmentId } }, // Remove the appointment ID from the array
-    { new: true } // Return the updated patient document
-    );
-    if (!patient) {
-        console.warn(`No patient found with Appointment ID: ${appointmentId}`);
-    }
-    res.status(http_status_codes_1.StatusCodes.OK).json({
-        message: 'Appointment deleted successfully and reference removed from patient',
-        success: true,
-    });
-}));
-exports.deleteAppointment = deleteAppointment;

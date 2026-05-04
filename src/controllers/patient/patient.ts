@@ -4,42 +4,125 @@ import asyncWrapper from '../../middleware/async';
 import Patient from '../../models/Patient';
 import BadRequestError from '../../errors/bad-request';
 import NotFoundError from '../../errors/not-found';
-import Order from '../../models/Order';
-import MedicalFinding from '../../models/MedicalFinding';
-import Healthinfo from '../../models/healthinfo';
-import Appointment from '../../models/appointment';
-import Invoice from '../../models/Invoice';
-import Card from '../../models/card';
-import Credit from '../../models/creadit';
-import Orgnazation from '../../models/Orgnazation';
-import Prescription from '../../models/prescription';
-import MedicalCertificate from '../../models/medicalcerteficate';
-import Image from '../../models/image'; // Ensure Image is imported as a Mongoose model
+import User from '../../models/Users';
+ // Ensure Image is imported as a Mongoose model
 
-interface AuthenticatedRequest extends Request {
-  user?: {
-    userId: string;
-    username: string;
-    role: string;
-  };
-}
+
 
 // Create a new bicycle
-const createPatient = asyncWrapper(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { cardno, firstname, status,age,sex , phoneNumber, Town, KK, HNo,  description } = req.body;
+// Create a new patient
+const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+  const { 
+    cardno, 
+    firstname, 
+    status, 
+    age, 
+    sex, 
+    phoneNumber, 
+    Town, 
+    KK, 
+    HNo, 
+    description,
+    isbrace,
+    disablity,
+    HomePhone,
+    Address,
+    Email,
+    EmergencyContactPhone,
+    FinancialResponsible,
+    ParentGuardianInfo,
+    DOB,
+    Woreda,
+    Region
+  } = req.body;
   
-  const createdBy = {
-    id: req.user?.userId || '', 
-    username: req.user?.username || '', 
-  };
+  let createdBy;
+
+  // No logged-in user - randomly select a user with role 'User' from User model
+  
+  // Find users with role 'User' and not locked
+  const availableUsers = await User.find({ 
+    role: 'User',
+    lock: false // Only non-locked users
+  });
+  
+  if (availableUsers.length === 0) {
+    // Fallback: get any unlocked user if no 'User' role exists
+    const anyUser = await User.findOne({ lock: false });
+    if (anyUser) {
+      createdBy = {
+        id: anyUser._id,
+        username: anyUser.username,
+      };
+    } else {
+      // Ultimate fallback - system user
+      createdBy = {
+        id: 'system',
+        username: 'system',
+      };
+    }
+  } else {
+    // Select random user from available 'User' role users
+    const randomIndex = Math.floor(Math.random() * availableUsers.length);
+    const randomUser = availableUsers[randomIndex];
+    createdBy = {
+      id: randomUser._id,
+      username: randomUser.username,
+    };
+  }
 
   const existingPatient = await Patient.findOne({ cardno });
   if (existingPatient) {
-    throw new BadRequestError('Patient ID already exists. Please use a unique bicycle ID.');
+    throw new BadRequestError('Patient ID already exists. Please use a unique patient ID.');
   }
 
-  const patient = await Patient.create({ cardno, firstname, age,sex ,status, phoneNumber, Town, KK, HNo,  description , createdBy });
-  res.status(StatusCodes.CREATED).json({ patient });
+  // Convert DOB to number (timestamp) if provided
+  let convertedDOB = null;
+  if (DOB) {
+    // If DOB is a string date, convert to timestamp
+    if (typeof DOB === 'string') {
+      const date = new Date(DOB);
+      convertedDOB = date.getTime(); // Convert to milliseconds timestamp
+    } else if (typeof DOB === 'number') {
+      convertedDOB = DOB; // Already a number, use as is
+    } else {
+      convertedDOB = null;
+    }
+  }
+
+  // Prepare patient data
+  const patientData = {
+    cardno,
+    firstname,
+    age: age ? parseInt(age) : age, // Convert age to number if provided
+    sex,
+    status,
+    phoneNumber,
+    Town,
+    KK,
+    HNo,
+    description,
+    createdBy,
+    isbrace: isbrace || false,
+    disablity: disablity || false,
+    HomePhone: HomePhone || '',
+    Address: Address || '',
+    Email: Email || '',
+    EmergencyContactPhone: EmergencyContactPhone || '',
+    FinancialResponsible: FinancialResponsible || 'Self',
+    ParentGuardianInfo: ParentGuardianInfo || {},
+    DOB: convertedDOB,
+    Woreda: Woreda || '',
+    Region: Region || ''
+  };
+
+  const patient = await Patient.create(patientData);
+  
+  // Remove createdBy from the response
+  const patientResponse = patient.toObject();
+  delete patientResponse.createdBy;
+  
+  res.status(StatusCodes.CREATED).json({ patient: patientResponse });
 });
 
 // Get a single bicycle by ID
@@ -60,78 +143,35 @@ const getpatient = asyncWrapper(async (req: Request, res: Response): Promise<voi
 });
 
 // Get all bicycles
-const getAllpatient = asyncWrapper(async (_req: Request, res: Response): Promise<void> => {
-  const patients = await Patient.find({});
-  console.log(patients)
-  res.status(StatusCodes.OK).json({ patients , count: patients.length });
-});
-const getAllRecentPatients = asyncWrapper(async (_req: Request, res: Response): Promise<void> => {
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+// Get all patients with pagination
+const getAllpatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const skip = (page - 1) * limit;
 
-  const recentPatients = await Patient.find({
-    createdAt: { $gte: sixMonthsAgo }
+  const patients = await Patient.find({})
+    .skip(skip)
+    .limit(limit)
+        .select('-createdBy') // Exclude createdBy field from the query
+
+    .sort({ createdAt: -1 }); // Sort by newest first
+
+  const totalPatients = await Patient.countDocuments({});
+  const totalPages = Math.ceil(totalPatients / limit);
+
+  console.log(`Fetching patients - Page: ${page}, Limit: ${limit}`);
+  
+  res.status(StatusCodes.OK).json({ 
+    patients, 
+    count: patients.length,
+    total: totalPatients,
+    totalPages,
+    currentPage: page,
+    limit
   });
-
-  res.status(StatusCodes.OK).json({
-    patients: recentPatients,
-    count: recentPatients.length
-  });
 });
 
-
-const getoutpatient = asyncWrapper(async (_req: Request, res: Response): Promise<void> => {
-  const patients = await Patient.find({ status: 'Out' })
-    .sort({ createdAt: -1 }) // Newest patients first
-    .limit(100); // Limit to 100 patients
-
-  res.status(StatusCodes.OK).json({ patients });
-});
-
-// Delete a bicycle by ID
-const deletepatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { id: PatientId } = req.params;
-
-  if (!PatientId) {
-    throw new BadRequestError('Patient ID is required');
-  }
-
-  const patient = await Patient.findById(PatientId).exec();
-  if (!patient) {
-    throw new NotFoundError(`No Patient found with ID: ${PatientId}`);
-  }
-
-  // Delete associated documents
-  const modelsToDelete = [
-    { model: Order, ids: patient.Order },
-    { model: MedicalFinding, ids: patient.MedicalFinding },
-    { model: Healthinfo, ids: patient.Healthinfo },
-    { model: Appointment, ids: patient.Appointment },
-    { model: Image, ids: patient.Image },
-    { model: Invoice, ids: patient.Invoice },
-    { model: Card, ids: patient.Card },
-    { model: Credit, ids: patient.Credit },
-    { model: Orgnazation, ids: patient.Orgnazation },
-    { model: Prescription, ids: patient.Prescription },
-    { model: MedicalCertificate, ids: patient.MedicalCertificate },
-  ];
-
-  for (const entry of modelsToDelete) {
-    if (entry.ids && entry.ids.length > 0) {
-      await entry.model.deleteMany({ _id: { $in: entry.ids } });
-    }
-  }
-
-  // Also delete the Age model
-
-  // Finally, delete the patient
-  await Patient.findByIdAndDelete(PatientId);
-
-  res.status(StatusCodes.OK).json({ message: 'Patient and all related records deleted successfully' });
-});
-
-
-
+// Update patient
 const updatepatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { id: PatientId } = req.params;
 
@@ -141,10 +181,10 @@ const updatepatient = asyncWrapper(async (req: Request, res: Response): Promise<
 
   const updatedpatient = await Patient.findByIdAndUpdate(
     PatientId,
-    req.body, // Update with the fields provided in the request body
+    req.body,
     {
-      new: true, // Return the updated document
-      runValidators: true, // Ensure the update adheres to schema validation
+      new: true,
+      runValidators: true,
     }
   );
 
@@ -152,13 +192,21 @@ const updatepatient = asyncWrapper(async (req: Request, res: Response): Promise<
     throw new NotFoundError(`No Patient found with ID: ${PatientId}`);
   }
 
-  res.status(StatusCodes.OK).json({ message: 'Patient updated successfully', Patient: updatedpatient });
+  res.status(StatusCodes.OK).json({ 
+    message: 'Patient updated successfully', 
+    Patient: updatedpatient 
+  });
 });
 
-
-const searchPatients = asyncWrapper(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// Search patients with pagination
+const searchPatients = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { cardno, name, phoneNumber } = req.query;
-console.log(cardno)
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const skip = (page - 1) * limit;
+  
+  console.log(cardno);
+
   // Check if at least one search parameter is provided
   if (!cardno && !name && !phoneNumber) {
     throw new BadRequestError('Please provide at least one search parameter (cardno, name, or phoneNumber)');
@@ -174,7 +222,7 @@ console.log(cardno)
   if (name) {
     query.$or = [
       { firstname: { $regex: name as string, $options: 'i' } },
-      { lastname: { $regex: name as string, $options: 'i' } } // Assuming you have a lastname field
+      { lastname: { $regex: name as string, $options: 'i' } }
     ];
   }
 
@@ -182,7 +230,15 @@ console.log(cardno)
     query.phoneNumber = { $regex: phoneNumber as string, $options: 'i' };
   }
 
-  const patients = await Patient.find(query);
+  const patients = await Patient.find(query)
+    .skip(skip)
+    .limit(limit)
+        .select('-createdBy') // Exclude createdBy field from the query
+
+    .sort({ createdAt: -1 });
+
+  const totalPatients = await Patient.countDocuments(query);
+  const totalPages = Math.ceil(totalPatients / limit);
 
   if (patients.length === 0) {
     throw new NotFoundError('No patients found matching the search criteria');
@@ -191,7 +247,22 @@ console.log(cardno)
   res.status(StatusCodes.OK).json({ 
     success: true,
     count: patients.length,
+    total: totalPatients,
+    totalPages,
+    currentPage: page,
+    limit,
     data: patients 
   });
 });
-export { createPatient, getpatient ,updatepatient, getAllpatient,searchPatients, deletepatient ,getoutpatient,getAllRecentPatients};
+
+
+
+
+
+
+
+
+
+
+
+export { createPatient, getpatient ,updatepatient, getAllpatient,searchPatients};
