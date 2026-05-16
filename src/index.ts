@@ -6,8 +6,8 @@ import authRoutes from './routes/auth';
 import patientRoutes from './routes/patient';
 
 import appointRoutes from './routes/appointment'
-import auth from './middleware/authentication';
-
+import authPatient from './middleware/authentication';
+import repatientRoutes from './routes/rigisterpatient'
 import userRoutes from './routes/user';
 import path from 'path';
 
@@ -35,11 +35,13 @@ app.get('/', (req: Request, res: Response) => {
   res.send('Hello from the Node.js backend!');
 });
 
-app.use('/api', authRoutes);
 app.use('/api/patient', patientRoutes);
+app.use('/api/auth', repatientRoutes);
 
-app.use('/api/appointment', appointRoutes);
-app.use('/api/user', userRoutes);
+app.use('/api/appointment',authPatient, appointRoutes);
+app.use('/api/user',authPatient, userRoutes);
+app.use('/api',authPatient, authRoutes);
+
  
 
 

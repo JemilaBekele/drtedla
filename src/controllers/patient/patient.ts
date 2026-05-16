@@ -5,145 +5,234 @@ import Patient from '../../models/Patient';
 import BadRequestError from '../../errors/bad-request';
 import NotFoundError from '../../errors/not-found';
 import User from '../../models/Users';
+import { generateVerificationCode, sendVerificationEmail } from '../emailService';
+import VerificationToken from '../../models/VerificationToken';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
  // Ensure Image is imported as a Mongoose model
 
 
 
-// Create a new bicycle
-// Create a new patient
+
 const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  const { 
-    firstname, 
-    status, 
-    age, 
-    sex, 
-    phoneNumber, 
-    Town, 
-    KK, 
-    HNo, 
-    description,
-    isbrace,
-    disablity,
-    HomePhone,
-    Address,
-    Email,
-    EmergencyContactPhone,
-    FinancialResponsible,
-    ParentGuardianInfo,
-    DOB,
-    Woreda,
-    Region
-  } = req.body;
-  
-  let createdBy;
+    const {
+        firstname,
+        status,
+        age,
+        sex,
+        phoneNumber,
+        Town,
+        KK,
+        HNo,
+        description,
+        isbrace,
+        disablity,
+        HomePhone,
+        Address,
+        email,
+        password,
+        EmergencyContactPhone,
+        FinancialResponsible,
+        ParentGuardianInfo,
+        DOB,
+        Woreda,
+        Region
+    } = req.body;
 
-  // No logged-in user - randomly select a user with role 'User' from User model
-  
-  // Find users with role 'User' and not locked
-  const availableUsers = await User.find({ 
-    role: 'User',
-    lock: false // Only non-locked users
-  });
-  
-  if (availableUsers.length === 0) {
-    // Fallback: get any unlocked user if no 'User' role exists
-    const anyUser = await User.findOne({ lock: false });
-    if (anyUser) {
-      createdBy = {
-        id: anyUser._id,
-        username: anyUser.username,
-      };
-    } else {
-      // Ultimate fallback - system user
-      createdBy = {
-        id: 'system',
-        username: 'system',
-      };
+    // Validate required fields
+    if (!firstname) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'First name is required'
+        });
+        return;
     }
-  } else {
-    // Select random user from available 'User' role users
-    const randomIndex = Math.floor(Math.random() * availableUsers.length);
-    const randomUser = availableUsers[randomIndex];
-    createdBy = {
-      id: randomUser._id,
-      username: randomUser.username,
+
+    if (!phoneNumber) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Phone number is required'
+        });
+        return;
+    }
+
+    if (!email) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Email is required'
+        });
+        return;
+    }
+
+    if (!password) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Password is required'
+        });
+        return;
+    }
+
+    // Validate password strength
+    if (password.length < 6) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Password must be at least 6 characters long'
+        });
+        return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Please provide a valid email address'
+        });
+        return;
+    }
+
+    // Check if email already exists
+    const existingPatient = await Patient.findOne({ Email: email.toLowerCase() });
+    if (existingPatient) {
+        res.status(StatusCodes.CONFLICT).json({
+            success: false,
+            message: 'Patient with this email already exists'
+        });
+        return;
+    }
+
+    // Generate verification code
+    const verificationCode = generateVerificationCode();
+    const verificationCodeExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Save verification token to database
+    await VerificationToken.create({
+        email: email.toLowerCase(),
+        code: verificationCode,
+        expiresAt: verificationCodeExpiresAt
+    });
+
+    let createdBy;
+
+    // Find users with role 'User' and not locked
+    const availableUsers = await User.find({
+        role: 'User',
+        lock: false
+    });
+
+    if (availableUsers.length === 0) {
+        const anyUser = await User.findOne({ lock: false });
+        if (anyUser) {
+            createdBy = {
+                id: anyUser._id,
+                username: anyUser.username,
+            };
+        } else {
+            createdBy = {
+                id: 'system',
+                username: 'system',
+            };
+        }
+    } else {
+        const randomIndex = Math.floor(Math.random() * availableUsers.length);
+        const randomUser = availableUsers[randomIndex];
+        createdBy = {
+            id: randomUser._id,
+            username: randomUser.username,
+        };
+    }
+
+    // Automatically generate the next card number
+    const lastPatient = await Patient.findOne({})
+        .sort({ cardno: -1 })
+        .exec();
+
+    let finalCardNo;
+    if (lastPatient && lastPatient.cardno) {
+        const lastCardNo = lastPatient.cardno;
+        const numericPart = parseInt(lastCardNo.replace(/\D/g, ''));
+        if (!isNaN(numericPart)) {
+            const nextNumber = numericPart + 1;
+            finalCardNo = nextNumber.toString();
+        } else {
+            finalCardNo = '1';
+        }
+    } else {
+        finalCardNo = '1';
+    }
+
+    // Convert DOB to number (timestamp) if provided
+    let convertedDOB = null;
+    if (DOB) {
+        if (typeof DOB === 'string') {
+            const date = new Date(DOB);
+            convertedDOB = date.getTime();
+        } else if (typeof DOB === 'number') {
+            convertedDOB = DOB;
+        } else {
+            convertedDOB = null;
+        }
+    }
+
+    // Prepare patient data (but don't save yet - wait for verification)
+    const patientData = {
+        cardno: finalCardNo,
+        firstname,
+        age: age ? parseInt(age) : age,
+        sex,
+        status: 'pending_verification', // Special status until email verified
+        phoneNumber,
+        Town,
+        KK,
+        HNo,
+        description,
+        createdBy,
+        isbrace: isbrace || false,
+        disablity: disablity || false,
+        HomePhone: HomePhone || '',
+        Address: Address || '',
+        Email: email.toLowerCase(),
+        password: password,
+        EmergencyContactPhone: EmergencyContactPhone || '',
+        FinancialResponsible: FinancialResponsible || 'Self',
+        ParentGuardianInfo: ParentGuardianInfo || {},
+        DOB: convertedDOB,
+        Woreda: Woreda || '',
+        Region: Region || '',
+        isEmailVerified: false,
+        verificationCode: verificationCode,
+        verificationCodeExpiresAt: verificationCodeExpiresAt
     };
-  }
 
-  // Automatically generate the next card number (without leading zeros)
-  // Find the highest card number
-  const lastPatient = await Patient.findOne({})
-    .sort({ cardno: -1 })
-    .exec();
-  
-  let finalCardNo;
-  if (lastPatient && lastPatient.cardno) {
-    // Extract numeric part and increment
-    const lastCardNo = lastPatient.cardno;
-    const numericPart = parseInt(lastCardNo.replace(/\D/g, '')); // Remove non-numeric characters
-    if (!isNaN(numericPart)) {
-      const nextNumber = numericPart + 1;
-      // No leading zeros - just convert to string
-      finalCardNo = nextNumber.toString();
-    } else {
-      finalCardNo = '1';
+    // Store patient data temporarily (or save as pending)
+    // Option 1: Save as pending verification
+    const patient = await Patient.create(patientData);
+
+    // Send verification email
+    try {
+        await sendVerificationEmail(email, verificationCode, firstname);
+    } catch (emailError) {
+        console.error('Failed to send verification email:', emailError);
+        // Delete the created patient if email fails
+        await Patient.findByIdAndDelete(patient._id);
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+            success: false,
+            message: 'Failed to send verification email. Please try again.'
+        });
+        return;
     }
-  } else {
-    // First patient, start with 1
-    finalCardNo = '1';
-  }
 
-  // Convert DOB to number (timestamp) if provided
-  let convertedDOB = null;
-  if (DOB) {
-    // If DOB is a string date, convert to timestamp
-    if (typeof DOB === 'string') {
-      const date = new Date(DOB);
-      convertedDOB = date.getTime(); // Convert to milliseconds timestamp
-    } else if (typeof DOB === 'number') {
-      convertedDOB = DOB; // Already a number, use as is
-    } else {
-      convertedDOB = null;
-    }
-  }
-
-  // Prepare patient data
-  const patientData = {
-    cardno: finalCardNo,
-    firstname,
-    age: age ? parseInt(age) : age, // Convert age to number if provided
-    sex,
-    status: status || 'active',
-    phoneNumber,
-    Town,
-    KK,
-    HNo,
-    description,
-    createdBy,
-    isbrace: isbrace || false,
-    disablity: disablity || false,
-    HomePhone: HomePhone || '',
-    Address: Address || '',
-    Email: Email || '',
-    EmergencyContactPhone: EmergencyContactPhone || '',
-    FinancialResponsible: FinancialResponsible || 'Self',
-    ParentGuardianInfo: ParentGuardianInfo || {},
-    DOB: convertedDOB,
-    Woreda: Woreda || '',
-    Region: Region || ''
-  };
-
-  const patient = await Patient.create(patientData);
-  
-  // Remove createdBy from the response
-  const patientResponse = patient.toObject();
-  delete patientResponse.createdBy;
-  
-  res.status(StatusCodes.CREATED).json({ 
-    success: true, 
-    message: 'Patient created successfully',
-    patient: patientResponse 
-  });
+    // Don't generate access token until email is verified
+    res.status(StatusCodes.CREATED).json({
+        success: true,
+        message: 'Patient created successfully. Please verify your email address with the code sent to your email.',
+        data: {
+            patientId: patient._id,
+            email: patient.Email,
+            requiresVerification: true
+        }
+    });
 });
 
 // Get a single bicycle by ID
@@ -287,7 +376,513 @@ const searchPatients = asyncWrapper(async (req: Request, res: Response): Promise
 
 
 
+const login = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const { email, password } = req.body;
+    
+    // Validate request body
+    if (!email || !password) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Please provide email and password'
+        });
+        return;
+    }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Please provide a valid email address'
+        });
+        return;
+    }
 
+    // Find patient by email with sensitive fields
+    const patient = await Patient.findOne({ Email: email.toLowerCase() })
+        .select('+refreshToken +refreshTokenExpiresAt +loginAttempts +lockUntil +isEmailVerified');
+    
+    if (!patient) {
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Invalid email or password'
+        });
+        return;
+    }
 
-export { createPatient, getpatient ,updatepatient, getAllpatient,searchPatients};
+    // CHECK IF EMAIL IS VERIFIED - THIS IS THE NEW CHECK
+    if (!patient.isEmailVerified) {
+        res.status(StatusCodes.FORBIDDEN).json({
+            success: false,
+            message: 'Please verify your email address before logging in. Check your email for the verification code.',
+            requiresVerification: true,
+            email: patient.Email,
+            patientId: patient._id
+        });
+        return;
+    }
+
+    // Check if account is temporarily locked
+    if (patient.lockUntil && patient.lockUntil > new Date()) {
+        const minutesLeft = Math.ceil((patient.lockUntil.getTime() - new Date().getTime()) / 60000);
+        res.status(StatusCodes.FORBIDDEN).json({
+            success: false,
+            message: `Account is temporarily locked. Please try again in ${minutesLeft} minutes.`
+        });
+        return;
+    }
+
+    // Check if patient account is permanently locked
+    if (patient.Locked === true) {
+        res.status(StatusCodes.FORBIDDEN).json({
+            success: false,
+            message: 'Your account has been locked. Please contact support.'
+        });
+        return;
+    }
+
+    // Check if patient has a password set
+    if (!patient.password) {
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Account not set up for login. Please contact support.'
+        });
+        return;
+    }
+
+    // Compare password
+    const isPasswordValid = await patient.comparePassword(password);
+    
+    if (!isPasswordValid) {
+        // Track failed login attempts
+        patient.loginAttempts = (patient.loginAttempts || 0) + 1;
+        
+        // Lock account after 5 failed attempts
+        if (patient.loginAttempts >= 5) {
+            patient.lockUntil = new Date(Date.now() + 30 * 60000); // Lock for 30 minutes
+            await patient.save();
+            res.status(StatusCodes.FORBIDDEN).json({
+                success: false,
+                message: 'Too many failed login attempts. Account locked for 30 minutes.'
+            });
+            return;
+        }
+        
+        await patient.save();
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Invalid email or password'
+        });
+        return;
+    }
+
+    // Reset login attempts on successful login
+    patient.loginAttempts = 0;
+    patient.lockUntil = undefined;
+
+    // Generate access token (short-lived)
+    const accessToken = patient.createJWT();
+    
+    // Generate refresh token (long-lived)
+    const refreshToken = patient.createRefreshToken();
+    
+    // Store refresh token in database (7 days expiry)
+    patient.refreshToken = refreshToken;
+    patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await patient.save();
+
+    // Set refresh token as HTTP-only cookie (more secure)
+    res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
+    // Remove sensitive data from response
+    const patientResponse = patient.toObject();
+    delete patientResponse.password;
+    delete patientResponse.createdBy;
+    delete patientResponse.__v;
+    delete patientResponse.refreshToken;
+    delete patientResponse.refreshTokenExpiresAt;
+    delete patientResponse.loginAttempts;
+    delete patientResponse.lockUntil;
+    delete patientResponse.verificationCode;
+    delete patientResponse.verificationCodeExpiresAt;
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Login successful',
+        user: {
+            id: patient._id,
+            cardno: patient.cardno,
+            firstname: patient.firstname,
+            email: patient.Email,
+            age: patient.age,
+            sex: patient.sex,
+            phoneNumber: patient.phoneNumber,
+            status: patient.status || 'active',
+            isbrace: patient.isbrace,
+            disablity: patient.disablity,
+            isEmailVerified: patient.isEmailVerified
+        },
+        accessToken, // Only return access token to client
+    });
+});
+
+const refreshAccessToken = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    // Get refresh token from cookie or request body
+    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    
+    if (!refreshToken) {
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Refresh token not provided'
+        });
+        return;
+    }
+    
+    // Find patient with this refresh token
+    const patient = await Patient.findOne({ 
+        refreshToken: refreshToken,
+        refreshTokenExpiresAt: { $gt: new Date() } // Not expired
+    });
+    
+    if (!patient) {
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Invalid or expired refresh token'
+        });
+        return;
+    }
+    
+    // Generate new access token
+    const newAccessToken = patient.createJWT();
+    
+    // Optional: Rotate refresh token (generate new one)
+    const newRefreshToken = patient.createRefreshToken();
+    patient.refreshToken = newRefreshToken;
+    patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await patient.save();
+    
+    // Set new refresh token in cookie
+    res.cookie('refreshToken', newRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    
+    res.status(StatusCodes.OK).json({
+        success: true,
+        accessToken: newAccessToken
+    });
+});
+const logout = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const refreshToken = req.cookies?.refreshToken;
+    
+    if (refreshToken) {
+        // Clear refresh token from database
+        await Patient.findOneAndUpdate(
+            { refreshToken: refreshToken },
+            { 
+                $unset: { refreshToken: 1, refreshTokenExpiresAt: 1 }
+            }
+        );
+    }
+    
+    // Clear cookie
+    res.clearCookie('refreshToken');
+    
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Logged out successfully'
+    });
+});
+const verifyEmail = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const { email, code, patientId } = req.body;
+
+    if (!email || !code) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Email and verification code are required'
+        });
+        return;
+    }
+
+    // Find verification token
+    const verificationToken = await VerificationToken.findOne({
+        email: email.toLowerCase(),
+        code: code,
+        expiresAt: { $gt: new Date() }
+    });
+
+    if (!verificationToken) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Invalid or expired verification code. Please request a new one.'
+        });
+        return;
+    }
+
+    // Find patient
+    const patient = await Patient.findOne({ 
+        Email: email.toLowerCase(),
+        isEmailVerified: false 
+    });
+
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({
+            success: false,
+            message: 'Patient not found or already verified'
+        });
+        return;
+    }
+
+    // Update patient as verified
+    patient.isEmailVerified = true;
+    patient.emailVerifiedAt = new Date();
+    patient.status = 'active'; // Change from 'pending_verification' to 'active'
+    patient.verificationCode = undefined;
+    patient.verificationCodeExpiresAt = undefined;
+    await patient.save();
+
+    // Delete verification token
+    await VerificationToken.deleteOne({ _id: verificationToken._id });
+
+    // Generate access token now that email is verified
+    const accessToken = patient.createJWT();
+
+    // Generate refresh token
+    const refreshToken = patient.createRefreshToken();
+    patient.refreshToken = refreshToken;
+    patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await patient.save();
+
+    // Set refresh token cookie
+    res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    // Remove sensitive data
+    const patientResponse = patient.toObject();
+    delete patientResponse.password;
+    delete patientResponse.createdBy;
+    delete patientResponse.verificationCode;
+    delete patientResponse.verificationCodeExpiresAt;
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Email verified successfully',
+        user: {
+            id: patient._id,
+            cardno: patient.cardno,
+            firstname: patient.firstname,
+            email: patient.Email,
+            age: patient.age,
+            sex: patient.sex,
+            phoneNumber: patient.phoneNumber,
+            role: 'patient',
+            status: patient.status,
+            isbrace: patient.isbrace,
+            disablity: patient.disablity
+        },
+        accessToken
+    });
+});
+const resendVerificationCode = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const { email } = req.body;
+
+    if (!email) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Email is required'
+        });
+        return;
+    }
+
+    // Find patient
+    const patient = await Patient.findOne({ 
+        Email: email.toLowerCase(),
+        isEmailVerified: false 
+    });
+
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({
+            success: false,
+            message: 'Patient not found or already verified'
+        });
+        return;
+    }
+
+    // Check if too many attempts
+    const recentToken = await VerificationToken.findOne({
+        email: email.toLowerCase(),
+        createdAt: { $gt: new Date(Date.now() - 5 * 60 * 1000) } // Last 5 minutes
+    });
+
+    if (recentToken && recentToken.attempts >= 3) {
+        res.status(StatusCodes.TOO_MANY_REQUESTS).json({
+            success: false,
+            message: 'Too many verification requests. Please wait 5 minutes.'
+        });
+        return;
+    }
+
+    // Generate new verification code
+    const newCode = generateVerificationCode();
+    const newExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    // Update or create verification token
+    await VerificationToken.findOneAndUpdate(
+        { email: email.toLowerCase() },
+        {
+            code: newCode,
+            expiresAt: newExpiry,
+            $inc: { attempts: 1 },
+            createdAt: new Date()
+        },
+        { upsert: true, new: true }
+    );
+
+    // Update patient with new code
+    patient.verificationCode = newCode;
+    patient.verificationCodeExpiresAt = newExpiry;
+    await patient.save();
+
+    // Send new verification email
+    await sendVerificationEmail(email, newCode, patient.firstname);
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'New verification code sent to your email'
+    });
+});
+
+// Step 1: Request password reset (send code to email)
+ const forgotPassword = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const { email } = req.body;
+
+    if (!email) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Email is required'
+        });
+        return;
+    }
+
+    // Find patient
+    const patient = await Patient.findOne({ Email: email.toLowerCase() });
+    
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({
+            success: false,
+            message: 'No account found with this email'
+        });
+        return;
+    }
+
+    // Generate verification code
+    const verificationCode = generateVerificationCode();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Save verification token (reuse existing model)
+    await VerificationToken.findOneAndUpdate(
+        { email: email.toLowerCase() },
+        {
+            code: verificationCode,
+            expiresAt: expiresAt,
+            attempts: 0
+        },
+        { upsert: true, new: true }
+    );
+
+    // Send email with code
+    try {
+        await sendVerificationEmail(email, verificationCode, patient.firstname);
+    } catch (error) {
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+            success: false,
+            message: 'Failed to send reset code. Please try again.'
+        });
+        return;
+    }
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Password reset code sent to your email'
+    });
+});
+
+// Step 2: Verify code and reset password
+// Step 2: Verify code and reset password
+const resetPassword = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Email, verification code, and new password are required'
+        });
+        return;
+    }
+
+    // Validate password strength
+    if (newPassword.length < 6) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Password must be at least 6 characters long'
+        });
+        return;
+    }
+
+    // Find verification token
+    const verificationToken = await VerificationToken.findOne({
+        email: email.toLowerCase(),
+        code: code,
+        expiresAt: { $gt: new Date() }
+    });
+
+    if (!verificationToken) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Invalid or expired verification code'
+        });
+        return;
+    }
+
+    // Find patient
+    const patient = await Patient.findOne({ Email: email.toLowerCase() });
+    
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({
+            success: false,
+            message: 'Patient not found'
+        });
+        return;
+    }
+
+    // IMPORTANT: Set password directly WITHOUT hashing
+    // The pre-save middleware will hash it automatically
+    patient.password = newPassword;
+    
+    // Clear refresh tokens (force re-login)
+    patient.refreshToken = undefined;
+    patient.refreshTokenExpiresAt = undefined;
+    
+    // Save patient - pre-save hook will hash the password
+    await patient.save();
+
+    // Delete the used verification token
+    await VerificationToken.deleteOne({ _id: verificationToken._id });
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Password reset successfully. Please login with your new password.'
+    });
+});
+export { resetPassword,forgotPassword,login,refreshAccessToken,resendVerificationCode,verifyEmail,logout, createPatient, getpatient ,updatepatient, getAllpatient,searchPatients};

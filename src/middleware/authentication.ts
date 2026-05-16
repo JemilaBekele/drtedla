@@ -1,18 +1,18 @@
+import Patient from '../models/Patient';
 import jwt from 'jsonwebtoken';
 import UnauthenticatedError from '../errors/unauthenticated';
-import User from '../models/Users';
 import { Request, Response, NextFunction } from 'express';
 
-// Extend the Request type to include `user`
+// Extend the Request type to include `patient`
 interface AuthenticatedRequest extends Request {
-  user?: {
-    userId: string;
-    username: string;
-    role: string;
+  patient?: {
+    patientId: string;
+    email: string;
+    firstname: string;
   };
 }
 
-const auth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+const authPatient = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -33,16 +33,23 @@ const auth = async (req: AuthenticatedRequest, res: Response, next: NextFunction
 
     const payload = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload;
 
-    const user = await User.findById(payload.userId).select('-password');
-    if (!user) {
-      console.error('User associated with token not found');
+    // Find patient by id and exclude password
+    const patient = await Patient.findById(payload.userId).select('-password');
+    if (!patient) {
+      console.error('Patient associated with token not found');
       return next(new UnauthenticatedError('Authentication invalid'));
     }
 
-    req.user = { 
-      userId: user._id.toString(),
-      username: user.username,
-      role: user.role 
+    // Check if patient is locked/active
+    if (patient.Locked === true) {
+      console.error('Patient account is locked');
+      return next(new UnauthenticatedError('Account is locked. Please contact support'));
+    }
+
+    req.patient = { 
+      patientId: patient._id.toString(),
+      email: patient.Email,
+      firstname: patient.firstname
     };
 
     next();
@@ -52,4 +59,4 @@ const auth = async (req: AuthenticatedRequest, res: Response, next: NextFunction
   }
 };
 
-export default auth;
+export default authPatient;
