@@ -12,6 +12,21 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
  // Ensure Image is imported as a Mongoose model
 
+// Shared cookie configuration
+const ACCESS_TOKEN_COOKIE_OPTIONS = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict' as const,
+    maxAge: 15 * 60 * 1000, // 15 minutes
+};
+
+const REFRESH_TOKEN_COOKIE_OPTIONS = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict' as const,
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
 
 
 
@@ -491,13 +506,9 @@ const login = asyncWrapper(async (req: Request, res: Response): Promise<void> =>
     patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await patient.save();
 
-    // Set refresh token as HTTP-only cookie (more secure)
-    res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    });
+    // Set HTTP-only cookies
+    res.cookie('accessToken', accessToken, ACCESS_TOKEN_COOKIE_OPTIONS);
+    res.cookie('refreshToken', refreshToken, REFRESH_TOKEN_COOKIE_OPTIONS);
 
     // Remove sensitive data from response
     const patientResponse = patient.toObject();
@@ -566,13 +577,9 @@ const refreshAccessToken = asyncWrapper(async (req: Request, res: Response): Pro
     patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await patient.save();
     
-    // Set new refresh token in cookie
-    res.cookie('refreshToken', newRefreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    // Set new cookies
+    res.cookie('accessToken', newAccessToken, ACCESS_TOKEN_COOKIE_OPTIONS);
+    res.cookie('refreshToken', newRefreshToken, REFRESH_TOKEN_COOKIE_OPTIONS);
     
     res.status(StatusCodes.OK).json({
         success: true,
@@ -592,7 +599,8 @@ const logout = asyncWrapper(async (req: Request, res: Response): Promise<void> =
         );
     }
     
-    // Clear cookie
+    // Clear cookies
+    res.clearCookie('accessToken');
     res.clearCookie('refreshToken');
     
     res.status(StatusCodes.OK).json({
@@ -660,13 +668,9 @@ const verifyEmail = asyncWrapper(async (req: Request, res: Response): Promise<vo
     patient.refreshTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await patient.save();
 
-    // Set refresh token cookie
-    res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    // Set HTTP-only cookies
+    res.cookie('accessToken', accessToken, ACCESS_TOKEN_COOKIE_OPTIONS);
+    res.cookie('refreshToken', refreshToken, REFRESH_TOKEN_COOKIE_OPTIONS);
 
     // Remove sensitive data
     const patientResponse = patient.toObject();
@@ -885,4 +889,146 @@ const resetPassword = asyncWrapper(async (req: Request, res: Response): Promise<
         message: 'Password reset successfully. Please login with your new password.'
     });
 });
-export { resetPassword,forgotPassword,login,refreshAccessToken,resendVerificationCode,verifyEmail,logout, createPatient, getpatient ,updatepatient, getAllpatient,searchPatients};
+
+// ─── /me endpoints (use authenticated patient's own ID from token) ───────────
+
+// Get current authenticated patient's profile
+const getMe = asyncWrapper(async (req: any, res: Response): Promise<void> => {
+    const patient = await Patient.findById(req.patient.patientId)
+        .select('-password -refreshToken -refreshTokenExpiresAt -verificationCode -verificationCodeExpiresAt -createdBy -Order -MedicalFinding -Healthinfo -Appointment -Image -Invoice -Card -Credit -Orgnazation -Prescription -TreatmentPlan -Consent -Orthodontics -ReferalCertificate -FNA -MedicalCertificate -Note -NoteConPat -DentalChart -SampleTwo -Perfo -DentalLabForm');
+
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({ success: false, message: 'Patient not found' });
+        return;
+    }
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        user: {
+            _id: patient._id,
+            cardno: patient.cardno,
+            firstname: patient.firstname,
+            email: patient.Email,
+            age: patient.age,
+            sex: patient.sex,
+            phoneNumber: patient.phoneNumber,
+            Town: patient.Town,
+            KK: patient.KK,
+            HNo: patient.HNo,
+            Woreda: patient.Woreda,
+            Region: patient.Region,
+            Address: patient.Address,
+            HomePhone: patient.HomePhone,
+            EmergencyContactPhone: patient.EmergencyContactPhone,
+            DOB: patient.DOB,
+            isbrace: patient.isbrace,
+            disablity: patient.disablity,
+            isEmailVerified: patient.isEmailVerified,
+            color: patient.color,
+            FinancialResponsible: patient.FinancialResponsible,
+            ParentGuardianInfo: patient.ParentGuardianInfo,
+            createdAt: patient.createdAt,
+            updatedAt: patient.updatedAt,
+        },
+    });
+});
+
+// Change own password (authenticated patient)
+const changeMyPassword = asyncWrapper(async (req: any, res: Response): Promise<void> => {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        throw new BadRequestError('Please provide current password and new password');
+    }
+
+    if (newPassword.length < 6) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'New password must be at least 6 characters long',
+        });
+        return;
+    }
+
+    const patient = await Patient.findById(req.patient.patientId);
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({ success: false, message: 'Patient not found' });
+        return;
+    }
+
+    const isPasswordCorrect = await patient.comparePassword(currentPassword);
+    if (!isPasswordCorrect) {
+        res.status(StatusCodes.UNAUTHORIZED).json({
+            success: false,
+            message: 'Current password is incorrect',
+        });
+        return;
+    }
+
+    patient.password = newPassword;
+
+    // Invalidate refresh tokens (force re-login)
+    patient.refreshToken = undefined;
+    patient.refreshTokenExpiresAt = undefined;
+    await patient.save();
+
+    // Clear cookies
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Password updated successfully. Please log in again.',
+    });
+});
+
+// Update own profile (non-sensitive fields only)
+const updateMyProfile = asyncWrapper(async (req: any, res: Response): Promise<void> => {
+    const allowedFields = [
+        'firstname', 'phoneNumber', 'Town', 'KK', 'HNo', 'Woreda', 'Region',
+        'Address', 'HomePhone', 'EmergencyContactPhone', 'DOB',
+        'FinancialResponsible', 'ParentGuardianInfo', 'description',
+    ];
+
+    const updateData: Record<string, any> = {};
+    for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+            updateData[field] = req.body[field];
+        }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'No valid fields provided to update',
+        });
+        return;
+    }
+
+    const patient = await Patient.findByIdAndUpdate(
+        req.patient.patientId,
+        updateData,
+        { new: true, runValidators: true }
+    ).select('-password -refreshToken -refreshTokenExpiresAt -verificationCode -verificationCodeExpiresAt');
+
+    if (!patient) {
+        res.status(StatusCodes.NOT_FOUND).json({ success: false, message: 'Patient not found' });
+        return;
+    }
+
+    res.status(StatusCodes.OK).json({
+        success: true,
+        message: 'Profile updated successfully',
+        user: {
+            _id: patient._id,
+            cardno: patient.cardno,
+            firstname: patient.firstname,
+            email: patient.Email,
+            phoneNumber: patient.phoneNumber,
+            Town: patient.Town,
+            Address: patient.Address,
+        },
+    });
+});
+
+export { resetPassword, forgotPassword, login, refreshAccessToken, resendVerificationCode, verifyEmail, logout, createPatient, getpatient, updatepatient, getAllpatient, searchPatients, getMe, changeMyPassword, updateMyProfile };
+

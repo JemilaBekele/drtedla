@@ -1,12 +1,14 @@
 import mongoose from "mongoose";
-
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
 
 const userSchema = new mongoose.Schema({
   username: {
     type: String,
     required: [true, "Please provide a username"],
     minlength: 3,
-    maxlength: 50, // Fixed typo from "maxkength"
+    maxlength: 50,
   },
   password: {
     type: String,
@@ -45,6 +47,16 @@ const userSchema = new mongoose.Schema({
     required: false,
     default: null,
   },
+  refreshToken: {
+    type: String,
+    select: false, // Don't return by default in queries
+  },
+  refreshTokenExpiresAt: {
+    type: Date,
+    select: false,
+  },
+}, {
+  timestamps: true,
 });
 
 
@@ -61,8 +73,43 @@ userSchema.pre("save", async function (next) {
   next();
 });
 
+// Pre-save middleware to hash password
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error: any) {
+    next(error);
+  }
+});
+
+// Compare candidate password with stored hash
+userSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Create short-lived JWT access token
+userSchema.methods.createJWT = function (): string {
+  return jwt.sign(
+    {
+      userId: this._id,
+      username: this.username,
+      role: this.role,
+      type: "access",
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m" }
+  );
+};
+
+// Create opaque refresh token
+userSchema.methods.createRefreshToken = function (): string {
+  return crypto.randomBytes(40).toString("hex");
+};
+
 const User = mongoose.models.User || mongoose.model("User", userSchema);
-
-
 
 export default User;

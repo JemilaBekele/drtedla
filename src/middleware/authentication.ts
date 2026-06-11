@@ -12,21 +12,33 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
+/**
+ * Patient authentication middleware.
+ * Supports dual-mode token extraction:
+ *   1. Authorization: Bearer <token>  (header — preferred)
+ *   2. req.cookies.accessToken        (HTTP-only cookie — fallback)
+ */
 const authPatient = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
-  const authHeader = req.headers.authorization;
+  let token: string | undefined;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.error('Missing or malformed Authorization header');
-    return next(new UnauthenticatedError('Authentication invalid'));
+  // 1. Try Bearer header first
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
   }
 
-  const token = authHeader.split(' ')[1];
-  console.log('Token:', token); // Debugging
+  // 2. Fall back to HTTP-only cookie
+  if (!token && req.cookies?.accessToken) {
+    token = req.cookies.accessToken;
+  }
+
+  if (!token) {
+    return next(new UnauthenticatedError('Authentication invalid'));
+  }
 
   try {
     const JWT_SECRET = process.env.JWT_SECRET;
     if (!JWT_SECRET) {
-      console.error('JWT_SECRET environment variable is not defined');
       res.status(500).json({ error: 'Server configuration error: JWT_SECRET is missing' });
       return;
     }
@@ -36,13 +48,11 @@ const authPatient = async (req: AuthenticatedRequest, res: Response, next: NextF
     // Find patient by id and exclude password
     const patient = await Patient.findById(payload.userId).select('-password');
     if (!patient) {
-      console.error('Patient associated with token not found');
       return next(new UnauthenticatedError('Authentication invalid'));
     }
 
     // Check if patient is locked/active
     if (patient.Locked === true) {
-      console.error('Patient account is locked');
       return next(new UnauthenticatedError('Account is locked. Please contact support'));
     }
 
@@ -54,7 +64,6 @@ const authPatient = async (req: AuthenticatedRequest, res: Response, next: NextF
 
     next();
   } catch (error) {
-    console.error('Token verification failed:', error instanceof Error ? error.message : 'Unknown error');
     return next(new UnauthenticatedError('Authentication invalid'));
   }
 };
