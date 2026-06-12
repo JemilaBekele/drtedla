@@ -114,7 +114,8 @@ const login = asyncWrapper(async (req: Request, res: Response): Promise<void> =>
             role: user.role,
             phone: user.phone,
         },
-        accessToken, // Also in response body for clients that prefer Bearer header
+        accessToken,  // For Bearer-mode clients (also set as httpOnly cookie)
+        refreshToken, // For Bearer-mode clients (also set as httpOnly cookie)
     });
 });
 
@@ -161,6 +162,7 @@ const refreshAccessToken = asyncWrapper(async (req: Request, res: Response): Pro
     res.status(StatusCodes.OK).json({
         success: true,
         accessToken: newAccessToken,
+        refreshToken: newRefreshToken, // Return rotated token so Bearer-mode clients can refresh again
     });
 });
 

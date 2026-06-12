@@ -538,7 +538,8 @@ const login = asyncWrapper(async (req: Request, res: Response): Promise<void> =>
             disablity: patient.disablity,
             isEmailVerified: patient.isEmailVerified
         },
-        accessToken, // Only return access token to client
+        accessToken,  // For Bearer-mode clients (also set as httpOnly cookie)
+        refreshToken, // For Bearer-mode clients (also set as httpOnly cookie)
     });
 });
 
@@ -583,11 +584,13 @@ const refreshAccessToken = asyncWrapper(async (req: Request, res: Response): Pro
     
     res.status(StatusCodes.OK).json({
         success: true,
-        accessToken: newAccessToken
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken, // Return rotated token so Bearer-mode clients can refresh again
     });
 });
 const logout = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-    const refreshToken = req.cookies?.refreshToken;
+    // Support both transports: cookie (web) and request body (Bearer-mode clients)
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
     
     if (refreshToken) {
         // Clear refresh token from database
@@ -695,7 +698,8 @@ const verifyEmail = asyncWrapper(async (req: Request, res: Response): Promise<vo
             isbrace: patient.isbrace,
             disablity: patient.disablity
         },
-        accessToken
+        accessToken,  // For Bearer-mode clients (also set as httpOnly cookie)
+        refreshToken, // For Bearer-mode clients (also set as httpOnly cookie)
     });
 });
 const resendVerificationCode = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
