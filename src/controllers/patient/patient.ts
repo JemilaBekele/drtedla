@@ -11,6 +11,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
  // Ensure Image is imported as a Mongoose model
+import { validateEmail } from './emailValidator';
 
 // Shared cookie configuration
 const ACCESS_TOKEN_COOKIE_OPTIONS = {
@@ -76,6 +77,15 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
         res.status(StatusCodes.BAD_REQUEST).json({
             success: false,
             message: 'Email is required'
+        });
+        return;
+    }
+        // Email validation including disposable email check
+    const emailValidation = validateEmail(email);
+    if (!emailValidation.valid) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: emailValidation.message
         });
         return;
     }

@@ -1,11 +1,22 @@
 "use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
 const userReferenceSchema_1 = __importDefault(require("./userReferenceSchema"));
-// Import Order model
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const crypto_1 = __importDefault(require("crypto"));
 // Define the schemas
 const patientSchema = new mongoose_1.default.Schema({
     cardno: {
@@ -18,6 +29,10 @@ const patientSchema = new mongoose_1.default.Schema({
         required: [true, "Please provide a firstname"],
         minlength: 3,
         maxlength: 50,
+    },
+    password: {
+        type: String,
+        minlength: 6,
     },
     isbrace: {
         type: Boolean,
@@ -65,6 +80,9 @@ const patientSchema = new mongoose_1.default.Schema({
     },
     Email: {
         type: String,
+        lowercase: true,
+        trim: true,
+        match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
     },
     EmergencyContactPhone: {
         type: String,
@@ -85,6 +103,14 @@ const patientSchema = new mongoose_1.default.Schema({
         type: Boolean,
         default: false,
     },
+    refreshToken: {
+        type: String,
+        select: false // Don't return by default
+    },
+    refreshTokenExpiresAt: {
+        type: Date,
+        select: false
+    },
     finish: {
         type: Boolean,
         default: false,
@@ -97,6 +123,22 @@ const patientSchema = new mongoose_1.default.Schema({
     Locked: {
         type: Boolean,
         default: false,
+    },
+    // Add to patientSchema
+    isEmailVerified: {
+        type: Boolean,
+        default: false
+    },
+    emailVerifiedAt: {
+        type: Date
+    },
+    verificationCode: {
+        type: String,
+        select: false
+    },
+    verificationCodeExpiresAt: {
+        type: Date,
+        select: false
     },
     Order: [
         {
@@ -231,8 +273,66 @@ const patientSchema = new mongoose_1.default.Schema({
         },
     ],
 }, {
-    timestamps: true, // Standard options
-    strictPopulate: false // Add it as part of the main options object
+    timestamps: true,
+    strictPopulate: false
+});
+patientSchema.methods.comparePassword = function (candidatePassword) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!this.password)
+            return false;
+        return yield bcryptjs_1.default.compare(candidatePassword, this.password);
+    });
+};
+// Create JWT method (short-lived access token)
+patientSchema.methods.createJWT = function () {
+    return jsonwebtoken_1.default.sign({
+        userId: this._id,
+        email: this.Email,
+        firstname: this.firstname,
+        role: 'patient',
+        type: 'access'
+    }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m' });
+};
+// Create refresh token method
+patientSchema.methods.createRefreshToken = function () {
+    // Generate a secure random token
+    const refreshToken = crypto_1.default.randomBytes(40).toString('hex');
+    return refreshToken;
+};
+// Pre-save middleware to hash password
+patientSchema.pre('save', function (next) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!this.isModified('password'))
+            return next();
+        try {
+            if (this.password && typeof this.password === 'string') {
+                const salt = yield bcryptjs_1.default.genSalt(10);
+                this.password = yield bcryptjs_1.default.hash(this.password, salt);
+            }
+            next();
+        }
+        catch (error) {
+            next(error);
+        }
+    });
+});
+// Pre-findOneAndUpdate middleware for updates
+patientSchema.pre('findOneAndUpdate', function (next) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const update = this.getUpdate();
+        if (update.password) {
+            try {
+                const salt = yield bcryptjs_1.default.genSalt(10);
+                if (typeof update.password === 'string') {
+                    update.password = yield bcryptjs_1.default.hash(update.password, salt);
+                }
+            }
+            catch (error) {
+                return next(error);
+            }
+        }
+        next();
+    });
 });
 const Patient = mongoose_1.default.models.Patient || mongoose_1.default.model("Patient", patientSchema);
 exports.default = Patient;

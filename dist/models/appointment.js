@@ -12,6 +12,9 @@ const AppointmentSchema = new mongoose_1.default.Schema({
     appointmentTime: {
         type: String, // You can also use Number if you want to store time in a specific format like military time
     },
+    appointmentEndTime: {
+        type: String,
+    },
     reasonForVisit: {
         type: String,
     },

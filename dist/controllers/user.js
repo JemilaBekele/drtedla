@@ -79,7 +79,8 @@ const createUser = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, 
 exports.createUser = createUser;
 // Get all users (optional utility function)
 const getAllUsers = (0, async_1.default)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const users = yield Users_1.default.find({}).select('-password'); // Exclude password field
+    // Filter for roles that are NOT equal to 'User'
+    const users = yield Users_1.default.find({ role: { $ne: 'User' } }).select('-password');
     res.status(http_status_codes_1.StatusCodes.OK).json({
         success: true,
         count: users.length,

@@ -13,12 +13,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importDefault(require("mongoose"));
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const crypto_1 = __importDefault(require("crypto"));
 const userSchema = new mongoose_1.default.Schema({
     username: {
         type: String,
         required: [true, "Please provide a username"],
         minlength: 3,
-        maxlength: 50, // Fixed typo from "maxkength"
+        maxlength: 50,
     },
     password: {
         type: String,
@@ -57,6 +60,16 @@ const userSchema = new mongoose_1.default.Schema({
         required: false,
         default: null,
     },
+    refreshToken: {
+        type: String,
+        select: false, // Don't return by default in queries
+    },
+    refreshTokenExpiresAt: {
+        type: Date,
+        select: false,
+    },
+}, {
+    timestamps: true,
 });
 // Middleware to ensure only one 'Locked' role user exists
 userSchema.pre("save", function (next) {
@@ -72,5 +85,39 @@ userSchema.pre("save", function (next) {
         next();
     });
 });
+// Pre-save middleware to hash password
+userSchema.pre("save", function (next) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!this.isModified("password"))
+            return next();
+        try {
+            const salt = yield bcryptjs_1.default.genSalt(10);
+            this.password = yield bcryptjs_1.default.hash(this.password, salt);
+            next();
+        }
+        catch (error) {
+            next(error);
+        }
+    });
+});
+// Compare candidate password with stored hash
+userSchema.methods.comparePassword = function (candidatePassword) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return yield bcryptjs_1.default.compare(candidatePassword, this.password);
+    });
+};
+// Create short-lived JWT access token
+userSchema.methods.createJWT = function () {
+    return jsonwebtoken_1.default.sign({
+        userId: this._id,
+        username: this.username,
+        role: this.role,
+        type: "access",
+    }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m" });
+};
+// Create opaque refresh token
+userSchema.methods.createRefreshToken = function () {
+    return crypto_1.default.randomBytes(40).toString("hex");
+};
 const User = mongoose_1.default.models.User || mongoose_1.default.model("User", userSchema);
 exports.default = User;

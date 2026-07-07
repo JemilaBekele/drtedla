@@ -5,11 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const patient_1 = require("../controllers/patient/patient");
+const authentication_1 = __importDefault(require("../middleware/authentication"));
 const router = express_1.default.Router();
-// Define routes for Bicycle
-router.route('/').post(patient_1.createPatient); // Create a new bicycle
-router.route('/:id').get(patient_1.getpatient); // Get a single bicycle by ID
-router.route('/').get(patient_1.getAllpatient);
-router.route('/find/search').get(patient_1.searchPatients);
-router.route('/:id').patch(patient_1.updatepatient); // Delete a bicycle by ID
+// ─── /me routes (authenticated patient's own data) ──────────────────────────
+router.route('/me').get(authentication_1.default, patient_1.getMe);
+router.route('/me/change-password').patch(authentication_1.default, patient_1.changeMyPassword);
+router.route('/me/update-profile').patch(authentication_1.default, patient_1.updateMyProfile);
+// ─── General patient routes ─────────────────────────────────────────────────
+router.route('/find/search').get(authentication_1.default, patient_1.searchPatients); // Search patients (protected)
+router.route('/').get(authentication_1.default, patient_1.getAllpatient); // Get all patients (protected)
+router.route('/:id').get(authentication_1.default, patient_1.getpatient); // Get a single patient by ID (protected)
+router.route('/:id').patch(authentication_1.default, patient_1.updatepatient); // Update patient by ID (protected)
 exports.default = router;

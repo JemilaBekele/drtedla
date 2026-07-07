@@ -40,8 +40,8 @@ app.use('/api/auth', patientAuthRoutes);                       // Public: regist
 app.use('/api/patient', authPatient, patientRoutes);           // Protected: patient data (requires patient JWT)
 
 // ─── Employee/Staff routes ───────────────────────────────────────────────────
-app.use('/api/employee', employeeRoutes);                      // Public + protected (middleware applied per-route inside)
-app.use('/api/appointment', authEmployee, appointRoutes);      // Protected: appointments (requires employee JWT)
+app.use('/api/user', employeeRoutes);                      // Public + protected (middleware applied per-route inside)
+app.use('/api/appointment', authPatient, appointRoutes);      // Protected: appointments (requires patient JWT)
 
 // ─── Global Error-Handling Middleware ────────────────────────────────────────
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

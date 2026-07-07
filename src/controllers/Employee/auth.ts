@@ -407,6 +407,7 @@ const updateMyProfile = asyncWrapper(async (req: any, res: Response): Promise<vo
 
 // Get all doctors
 const getDoctors = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+    console.log('Fetching doctors...');
     try {
  const doctors = await User.find({ role: 'doctor' })
       .select('-password')
