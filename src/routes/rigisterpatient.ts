@@ -18,6 +18,7 @@ router.route('/resend-verification').post(resendVerificationCode); // Resend ver
 router.route('/refresh-token').post(refreshAccessToken); // Refresh access token
 router.route('/logout').post(logout); // Logout patient
 
+
 router.route('/forgot-password').post(forgotPassword);
 router.route('/reset-password').post(resetPassword);
 // Optional: Add route to check verification status

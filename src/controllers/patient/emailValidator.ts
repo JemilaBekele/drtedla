@@ -1,11 +1,12 @@
 // utils/emailValidator.ts
+import MailChecker from 'mailchecker';
 
 export interface EmailValidationResult {
     valid: boolean;
     message: string;
 }
 
-// Comprehensive list of disposable email domains
+// Extra disposable domains on top of the mailchecker blacklist (~55k domains)
 const disposableDomains = [
     'mailinator.com',
     'guerrillamail.com',
@@ -181,14 +182,20 @@ const extractDomain = (email: string): string | null => {
     return parts.length === 2 ? parts[1] : null;
 };
 
+const blockedDomains: Set<string> = new Set([...MailChecker.blacklist(), ...disposableDomains]);
+
 /**
- * Check if email uses a disposable domain
+ * Check if email uses a disposable domain (including subdomains, e.g. abc.yopmail.com)
  */
 const isDisposableEmail = (email: string): boolean => {
     if (!email) return false;
     const domain = extractDomain(email);
     if (!domain) return false;
-    return disposableDomains.includes(domain);
+    const labels = domain.split('.');
+    for (let i = 0; i < labels.length - 1; i++) {
+        if (blockedDomains.has(labels.slice(i).join('.'))) return true;
+    }
+    return false;
 };
 
 /**
