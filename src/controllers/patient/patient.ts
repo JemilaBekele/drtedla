@@ -178,8 +178,10 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     }
 
     // Automatically generate the next card number
+    // cardno is a String, so sort with numericOrdering ("1000" > "999") instead of alphabetical order
     const lastPatient = await Patient.findOne({})
         .sort({ cardno: -1 })
+        .collation({ locale: 'en', numericOrdering: true })
         .exec();
 
     let finalCardNo;
