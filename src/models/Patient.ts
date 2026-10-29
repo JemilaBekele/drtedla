@@ -118,6 +118,10 @@ isEmailVerified: {
 emailVerifiedAt: {
     type: Date
 },
+// Set only for self-registered patients until they verify; MongoDB deletes the patient when it passes
+pendingExpiresAt: {
+    type: Date
+},
 verificationCode: {
     type: String,
     select: false
@@ -320,6 +324,9 @@ patientSchema.pre('findOneAndUpdate', async function(next) {
     }
     next();
 });
+
+// Auto-delete unverified self-registered patients once pendingExpiresAt is reached
+patientSchema.index({ pendingExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const Patient = mongoose.models.Patient || mongoose.model("Patient", patientSchema);
 

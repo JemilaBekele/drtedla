@@ -28,6 +28,26 @@ const REFRESH_TOKEN_COOKIE_OPTIONS = {
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
 };
 
+// Unverified patients hold a temporary unique cardno until they verify their email
+const PENDING_CARDNO_PREFIX = 'pending-';
+
+// Generate the next card number, ignoring temporary pending card numbers
+const getNextCardNo = async (): Promise<string> => {
+    // cardno is a String, so sort with numericOrdering ("1000" > "999") instead of alphabetical order
+    const lastPatient = await Patient.findOne({ cardno: { $not: /^pending-/ } })
+        .sort({ cardno: -1 })
+        .collation({ locale: 'en', numericOrdering: true })
+        .exec();
+
+    if (lastPatient && lastPatient.cardno) {
+        const numericPart = parseInt(lastPatient.cardno.replace(/\D/g, ''));
+        if (!isNaN(numericPart)) {
+            return (numericPart + 1).toString();
+        }
+    }
+    return '1';
+};
+
 
 
 
@@ -177,27 +197,6 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
         };
     }
 
-    // Automatically generate the next card number
-    // cardno is a String, so sort with numericOrdering ("1000" > "999") instead of alphabetical order
-    const lastPatient = await Patient.findOne({})
-        .sort({ cardno: -1 })
-        .collation({ locale: 'en', numericOrdering: true })
-        .exec();
-
-    let finalCardNo;
-    if (lastPatient && lastPatient.cardno) {
-        const lastCardNo = lastPatient.cardno;
-        const numericPart = parseInt(lastCardNo.replace(/\D/g, ''));
-        if (!isNaN(numericPart)) {
-            const nextNumber = numericPart + 1;
-            finalCardNo = nextNumber.toString();
-        } else {
-            finalCardNo = '1';
-        }
-    } else {
-        finalCardNo = '1';
-    }
-
     // Convert DOB to number (timestamp) if provided
     let convertedDOB = null;
     if (DOB) {
@@ -213,7 +212,9 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
 
     // Prepare patient data (but don't save yet - wait for verification)
     const patientData = {
-        cardno: finalCardNo,
+        // Real card number is assigned only after email verification (see verifyEmail)
+        cardno: `${PENDING_CARDNO_PREFIX}${crypto.randomUUID()}`,
+        pendingExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // auto-deleted after 24 hours if not verified
         firstname,
         age: age ? parseInt(age) : age,
         sex,
@@ -686,7 +687,22 @@ const verifyEmail = asyncWrapper(async (req: Request, res: Response): Promise<vo
     patient.status = 'active'; // Change from 'pending_verification' to 'active'
     patient.verificationCode = undefined;
     patient.verificationCodeExpiresAt = undefined;
-    await patient.save();
+    patient.pendingExpiresAt = undefined; // stop the 24-hour auto-delete
+
+    // Assign the real card number now that the email is verified (retry if another verify took the same number)
+    if (!patient.cardno || patient.cardno.startsWith(PENDING_CARDNO_PREFIX)) {
+        for (let attempt = 0; ; attempt++) {
+            patient.cardno = await getNextCardNo();
+            try {
+                await patient.save();
+                break;
+            } catch (error: any) {
+                if (error?.code !== 11000 || !error?.keyPattern?.cardno || attempt >= 4) throw error;
+            }
+        }
+    } else {
+        await patient.save();
+    }
 
     // Delete verification token
     await VerificationToken.deleteOne({ _id: verificationToken._id });
