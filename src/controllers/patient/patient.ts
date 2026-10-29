@@ -455,8 +455,9 @@ const login = asyncWrapper(async (req: Request, res: Response): Promise<void> =>
         return;
     }
 
-    // CHECK IF EMAIL IS VERIFIED - THIS IS THE NEW CHECK
-    if (!patient.isEmailVerified) {
+    // Only self-registered patients still waiting for email verification are blocked;
+    // existing patients (no pendingExpiresAt) don't need email verification
+    if (!patient.isEmailVerified && patient.pendingExpiresAt) {
         res.status(StatusCodes.FORBIDDEN).json({
             success: false,
             message: 'Please verify your email address before logging in. Check your email for the verification code.',
