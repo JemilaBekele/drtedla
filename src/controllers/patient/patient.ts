@@ -65,6 +65,22 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
         return;
     }
 
+    if (age === undefined || age === null || age === '') {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Age is required'
+        });
+        return;
+    }
+
+    if (!sex) {
+        res.status(StatusCodes.BAD_REQUEST).json({
+            success: false,
+            message: 'Sex is required'
+        });
+        return;
+    }
+
     if (!phoneNumber) {
         res.status(StatusCodes.BAD_REQUEST).json({
             success: false,
@@ -130,13 +146,6 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     // Generate verification code
     const verificationCode = generateVerificationCode();
     const verificationCodeExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-    // Save verification token to database
-    await VerificationToken.create({
-        email: email.toLowerCase(),
-        code: verificationCode,
-        expiresAt: verificationCodeExpiresAt
-    });
 
     let createdBy;
 
@@ -234,13 +243,21 @@ const createPatient = asyncWrapper(async (req: Request, res: Response): Promise<
     // Option 1: Save as pending verification
     const patient = await Patient.create(patientData);
 
+    // Save verification token only after the patient passed validation and was saved
+    const verificationToken = await VerificationToken.create({
+        email: email.toLowerCase(),
+        code: verificationCode,
+        expiresAt: verificationCodeExpiresAt
+    });
+
     // Send verification email
     try {
         await sendVerificationEmail(email, verificationCode, firstname);
     } catch (emailError) {
         console.error('Failed to send verification email:', emailError);
-        // Delete the created patient if email fails
+        // Delete the created patient and token if email fails
         await Patient.findByIdAndDelete(patient._id);
+        await VerificationToken.deleteOne({ _id: verificationToken._id });
         res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to send verification email. Please try again.'
