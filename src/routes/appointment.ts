@@ -1,8 +1,9 @@
 import express from 'express';
-import { createAppointment, getAppointments, getAppointment, updateAppointment, getAppointmentsschejule } from '../controllers/appointment/appoint';
+import { createAppointment, getAppointments, getAppointment, updateAppointment, getAppointmentsschejule, getBookedSlots } from '../controllers/appointment/appoint';
 
 const router = express.Router();
 
+router.route('/booked-slots').get(getBookedSlots);  // Booked times for a date (?date=YYYY-MM-DD&doctorId=...)
 // Define routes for Bicycle
 router.route('/:patientId').post(createAppointment);  
 router.route('/schedule').get(getAppointmentsschejule);  // Get all scheduled appointments

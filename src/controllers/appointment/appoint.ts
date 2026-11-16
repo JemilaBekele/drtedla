@@ -8,9 +8,36 @@ import BadRequestError from '../../errors/bad-request';
 import NotFoundError from '../../errors/not-found';
 import mongoose from 'mongoose';
 
+// Start/end (UTC) of the calendar day of a date, e.g. "2026-11-20" -> [2026-11-20T00:00Z, 2026-11-21T00:00Z)
+const getDayRange = (date: Date): { start: Date; end: Date } => {
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start, end };
+};
 
+// Id of the logged-in patient (set by authPatient middleware)
+const getAuthPatientId = (req: Request): string | undefined => (req as any).patient?.patientId;
 
-// Create a new appointment
+const sendForbidden = (res: Response): void => {
+  res.status(StatusCodes.FORBIDDEN).json({
+    success: false,
+    message: 'You can only access your own appointments',
+  });
+};
+
+// True if the doctor already has a Scheduled appointment at that day/time (optionally ignoring one appointment)
+const isSlotTaken = async (doctorId: any, date: Date, appointmentTime: string, excludeId?: any): Promise<boolean> => {
+  const { start, end } = getDayRange(date);
+  const filter: any = {
+    'doctorId.id': doctorId,
+    appointmentDate: { $gte: start, $lt: end },
+    appointmentTime,
+    status: 'Scheduled',
+  };
+  if (excludeId) filter._id = { $ne: excludeId };
+  return !!(await Appointment.exists(filter));
+};
+
 // Create a new appointment
 const createAppointment = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
   const { patientId } = req.params; // Patient ID from URL params
@@ -21,8 +48,21 @@ const createAppointment = asyncWrapper(async (req: Request, res: Response): Prom
     throw new BadRequestError('Patient ID is required');
   }
 
+  if (patientId !== getAuthPatientId(req)) {
+    sendForbidden(res);
+    return;
+  }
+
   if (!appointmentDate || !appointmentTime) {
     throw new BadRequestError('Missing required fields: appointmentDate and appointmentTime are required');
+  }
+
+  const parsedDate = new Date(appointmentDate);
+  if (isNaN(parsedDate.getTime())) {
+    throw new BadRequestError('Invalid appointmentDate. Use the format YYYY-MM-DD');
+  }
+  if (getDayRange(parsedDate).start.getTime() < getDayRange(new Date()).start.getTime()) {
+    throw new BadRequestError('Appointment date cannot be in the past');
   }
 
   // Find the patient by ID
@@ -48,6 +88,15 @@ const createAppointment = asyncWrapper(async (req: Request, res: Response): Prom
     id: new mongoose.Types.ObjectId(doctorId),
     username: doctorExists.username,
   };
+
+  // Prevent double booking: same doctor, same day, same time
+  if (await isSlotTaken(doctorInfo.id, parsedDate, appointmentTime)) {
+    res.status(StatusCodes.CONFLICT).json({
+      success: false,
+      message: 'This time slot is already booked. Please choose another time.',
+    });
+    return;
+  }
 
   // Determine createdBy - randomly select a user with role 'User' from User model
   let createdBy;
@@ -129,6 +178,11 @@ const getAppointments = asyncWrapper(async (req: Request, res: Response): Promis
     throw new BadRequestError('Patient ID is required');
   }
 
+  if (patientId !== getAuthPatientId(req)) {
+    sendForbidden(res);
+    return;
+  }
+
   // Find all appointments for this patient using the new schema structure
   const appointments = await Appointment.find({ 'patientId.id': patientId })
     .sort({ createdAt: -1 }) // Sort by newest first
@@ -167,6 +221,11 @@ const getAppointment = asyncWrapper(async (req: Request, res: Response): Promise
     throw new NotFoundError('Appointment not found');
   }
 
+  if (appointment.patientId?.id?.toString() !== getAuthPatientId(req)) {
+    sendForbidden(res);
+    return;
+  }
+
   res.status(StatusCodes.OK).json({
     message: 'Appointment retrieved successfully',
     success: true,
@@ -182,6 +241,21 @@ const updateAppointment = asyncWrapper(async (req: Request, res: Response): Prom
   // Validate required fields
   if (!appointmentId) {
     throw new BadRequestError('Appointment ID is required');
+  }
+
+  const existing = await Appointment.findById(appointmentId).exec();
+  if (!existing) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  if (existing.patientId?.id?.toString() !== getAuthPatientId(req)) {
+    sendForbidden(res);
+    return;
+  }
+
+  // Patients can only cancel; Completed is set by the clinic
+  if (updateData.status !== undefined && updateData.status !== 'Cancelled') {
+    throw new BadRequestError('You can only change status to Cancelled');
   }
 
   // Allowed updates including doctorId
@@ -222,6 +296,29 @@ const updateAppointment = asyncWrapper(async (req: Request, res: Response): Prom
     }
   }
 
+  // Rescheduling (new date, time or doctor): validate and prevent double booking
+  const changesSlot = ['appointmentDate', 'appointmentTime', 'doctorId'].some((k) => k in filteredUpdateData);
+  const finalStatus = filteredUpdateData.status ?? existing.status;
+  if (changesSlot && finalStatus === 'Scheduled') {
+    const finalDate = new Date(filteredUpdateData.appointmentDate ?? existing.appointmentDate);
+    const finalTime = filteredUpdateData.appointmentTime ?? existing.appointmentTime;
+    const finalDoctorId = filteredUpdateData.doctorId?.id ?? existing.doctorId?.id;
+
+    if (isNaN(finalDate.getTime())) {
+      throw new BadRequestError('Invalid appointmentDate. Use the format YYYY-MM-DD');
+    }
+    if (getDayRange(finalDate).start.getTime() < getDayRange(new Date()).start.getTime()) {
+      throw new BadRequestError('Appointment date cannot be in the past');
+    }
+    if (await isSlotTaken(finalDoctorId, finalDate, finalTime, existing._id)) {
+      res.status(StatusCodes.CONFLICT).json({
+        success: false,
+        message: 'This time slot is already booked. Please choose another time.',
+      });
+      return;
+    }
+  }
+
   // Find and update the appointment by ID
   const updatedAppointment = await Appointment.findByIdAndUpdate(
     appointmentId, 
@@ -245,15 +342,26 @@ const updateAppointment = asyncWrapper(async (req: Request, res: Response): Prom
 
 
 
-// Get all scheduled appointments
+// Get the clinic's upcoming booked times (no patient information)
 const getAppointmentsschejule = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
-  // Find all appointments and populate patient and doctor info
-  const appointments = await Appointment.find({ status: 'Scheduled' })
+  // All upcoming scheduled appointments, but only date/time/doctor - patient details are confidential
+  const appointmentDocs = await Appointment.find({
+    status: 'Scheduled',
+    appointmentDate: { $gte: getDayRange(new Date()).start },
+  })
     .sort({ appointmentDate: 1, appointmentTime: 1 }) // Sort by date and time ascending
-    .select('-createdBy') // Exclude createdBy field from the query
+    .select('appointmentDate appointmentTime appointmentEndTime doctorId')
     .exec();
-  
-  if (!appointments || appointments.length === 0) {
+
+  const appointments = appointmentDocs.map((a: any) => ({
+    appointmentDate: a.appointmentDate,
+    appointmentTime: a.appointmentTime,
+    appointmentEndTime: a.appointmentEndTime || null,
+    doctorId: a.doctorId?.id,
+    doctorName: a.doctorId?.username,
+  }));
+
+  if (appointments.length === 0) {
     res.status(StatusCodes.OK).json({
       message: 'No scheduled appointments available',
       success: true,
@@ -271,5 +379,51 @@ const getAppointmentsschejule = asyncWrapper(async (req: Request, res: Response)
   });
 });
 
+// Get booked time slots for a day (optionally for one doctor) so the frontend can hide them
+const getBookedSlots = asyncWrapper(async (req: Request, res: Response): Promise<void> => {
+  const { date, doctorId } = req.query;
 
-export { createAppointment, getAppointments, getAppointment, updateAppointment,getAppointmentsschejule };
+  if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new BadRequestError('date query parameter is required in the format YYYY-MM-DD');
+  }
+  const parsedDate = new Date(date);
+  if (isNaN(parsedDate.getTime())) {
+    throw new BadRequestError('Invalid date');
+  }
+
+  const { start, end } = getDayRange(parsedDate);
+  const filter: any = {
+    appointmentDate: { $gte: start, $lt: end },
+    status: 'Scheduled',
+  };
+
+  if (doctorId) {
+    if (typeof doctorId !== 'string' || !mongoose.Types.ObjectId.isValid(doctorId)) {
+      throw new BadRequestError('Invalid doctorId');
+    }
+    filter['doctorId.id'] = new mongoose.Types.ObjectId(doctorId);
+  }
+
+  // Only return slot info - never other patients' details
+  const appointments = await Appointment.find(filter)
+    .select('appointmentDate appointmentTime appointmentEndTime doctorId')
+    .sort({ appointmentTime: 1 })
+    .exec();
+
+  const bookedSlots = appointments.map((a: any) => ({
+    appointmentTime: a.appointmentTime,
+    appointmentEndTime: a.appointmentEndTime || null,
+    doctorId: a.doctorId?.id,
+    doctorName: a.doctorId?.username,
+  }));
+
+  res.status(StatusCodes.OK).json({
+    message: 'Booked slots retrieved successfully',
+    success: true,
+    date,
+    data: bookedSlots,
+    count: bookedSlots.length,
+  });
+});
+
+export { createAppointment, getAppointments, getAppointment, updateAppointment, getAppointmentsschejule, getBookedSlots };
